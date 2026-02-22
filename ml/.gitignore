@@ -1,0 +1,26 @@
+# Datasets
+data/
+*.csv
+*.parquet
+*.h5
+*.npz
+
+# Model artifacts
+models/
+*.pt
+*.pth
+*.pkl
+*.joblib
+*.onnx
+
+# Jupyter
+.ipynb_checkpoints
+
+# Python env
+venv/
+__pycache__/
+*.pyc
+
+# OS
+.DS_Store
+Thumbs.db

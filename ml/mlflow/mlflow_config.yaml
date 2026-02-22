@@ -1,0 +1,4 @@
+tracking_uri: http://localhost:5000
+experiment_name: crop-yield-prediction
+artifact_location: ./mlflow/artifacts
+registered_model_name: xgb-crop-yield

@@ -1,0 +1,15 @@
+model:
+  n_estimators: 100
+  max_depth: 6
+  learning_rate: 0.1
+  objective: "reg:squarederror"
+  random_state: 42
+
+data:
+  input_path: "../data/sample.csv"
+  target_column: "yield"
+  test_size: 0.2
+
+output:
+  model_path: "../models/xgb_model.pkl"
+  metrics_path: "../models/metrics.json"
