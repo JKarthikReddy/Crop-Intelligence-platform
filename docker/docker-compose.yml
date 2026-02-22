@@ -1,19 +1,36 @@
-# Docker Compose — Crop Intelligence Platform
-# TODO: Implement service definitions
-#
-# Services:
-#   - frontend  (Next.js)
-#   - backend   (FastAPI)
-#   - db        (PostgreSQL + PostGIS)
-#   - redis     (Task queue broker)
-#
-# Networks:
-#   - crop-intel-network
-#
-# Volumes:
-#   - postgres-data
-#   - redis-data
+services:
+  backend:
+    build:
+      context: ..
+      dockerfile: docker/backend.Dockerfile
+    container_name: crop_backend
+    ports:
+      - "8000:8000"
+    volumes:
+      - ../backend:/app
+    env_file:
+      - ../backend/.env
+    depends_on:
+      - postgres
+      - redis
 
-version: "3.9"
+  postgres:
+    image: postgis/postgis:15-3.3
+    container_name: crop_postgres
+    environment:
+      POSTGRES_USER: crop
+      POSTGRES_PASSWORD: crop
+      POSTGRES_DB: cropdb
+    ports:
+      - "5432:5432"
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
 
-services: {}
+  redis:
+    image: redis:7
+    container_name: crop_redis
+    ports:
+      - "6379:6379"
+
+volumes:
+  postgres_data:
