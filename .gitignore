@@ -1,0 +1,36 @@
+# Node
+node_modules
+.next
+out
+dist
+
+# Python
+__pycache__
+*.pyc
+*.pyo
+venv
+.venv
+*.egg-info
+
+# ML
+ml/data
+ml/models
+.ipynb_checkpoints
+
+# Environment
+.env
+.env.local
+.env.*.local
+
+# OS
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# IDE
+.vscode/settings.json
+.idea/
+
+# Build
+build/
+*.tsbuildinfo
