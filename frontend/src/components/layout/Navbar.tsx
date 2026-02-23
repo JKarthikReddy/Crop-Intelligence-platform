@@ -1,7 +1,7 @@
-"use client";
+'use client';
 
-import { Bell, ChevronDown, User } from "lucide-react";
-import { Button } from "@/components/ui/Button";
+import { Bell, ChevronDown, User } from 'lucide-react';
+import { Button } from '@/components/ui/Button';
 
 export function Navbar() {
   return (

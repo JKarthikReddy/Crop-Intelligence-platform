@@ -7,8 +7,21 @@
     "build": "next build",
     "start": "next start",
     "lint": "eslint",
+    "lint:fix": "eslint --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "prepare": "husky"
+  },
+  "lint-staged": {
+    "*.{ts,tsx}": [
+      "eslint --fix",
+      "prettier --write"
+    ],
+    "*.{json,css,md}": [
+      "prettier --write"
+    ]
   },
   "dependencies": {
     "class-variance-authority": "^0.7.1",
@@ -31,7 +44,11 @@
     "@vitejs/plugin-react": "5.1.4",
     "eslint": "^9.39.3",
     "eslint-config-next": "^16.1.6",
+    "eslint-config-prettier": "10.1.8",
+    "husky": "9.1.7",
     "jsdom": "28.1.0",
+    "lint-staged": "16.2.7",
+    "prettier": "3.8.1",
     "tailwindcss": "^4",
     "typescript": "^5",
     "vitest": "4.0.18"

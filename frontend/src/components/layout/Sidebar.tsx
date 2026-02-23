@@ -1,23 +1,16 @@
-"use client";
+'use client';
 
-import { cn } from "@/lib/utils";
-import {
-  LayoutDashboard,
-  Map,
-  BarChart3,
-  Droplets,
-  Settings,
-  Leaf,
-} from "lucide-react";
-import Link from "next/link";
-import { usePathname } from "next/navigation";
+import { cn } from '@/lib/utils';
+import { LayoutDashboard, Map, BarChart3, Droplets, Settings, Leaf } from 'lucide-react';
+import Link from 'next/link';
+import { usePathname } from 'next/navigation';
 
 const navItems = [
-  { label: "Overview", href: "/", icon: LayoutDashboard },
-  { label: "Fields", href: "/fields", icon: Map },
-  { label: "Analytics", href: "/analytics", icon: BarChart3 },
-  { label: "Irrigation", href: "/irrigation", icon: Droplets },
-  { label: "Settings", href: "/settings", icon: Settings },
+  { label: 'Overview', href: '/', icon: LayoutDashboard },
+  { label: 'Fields', href: '/fields', icon: Map },
+  { label: 'Analytics', href: '/analytics', icon: BarChart3 },
+  { label: 'Irrigation', href: '/irrigation', icon: Droplets },
+  { label: 'Settings', href: '/settings', icon: Settings },
 ];
 
 export function Sidebar() {
@@ -28,9 +21,7 @@ export function Sidebar() {
       {/* Brand */}
       <div className="flex h-16 items-center gap-2 border-b border-white/10 px-6">
         <Leaf className="h-6 w-6 text-emerald-400" />
-        <span className="text-lg font-semibold tracking-tight">
-          CropIntel
-        </span>
+        <span className="text-lg font-semibold tracking-tight">CropIntel</span>
       </div>
 
       {/* Navigation */}
@@ -42,10 +33,10 @@ export function Sidebar() {
               key={item.href}
               href={item.href}
               className={cn(
-                "flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors",
+                'flex items-center gap-3 rounded-xl px-3 py-2.5 text-sm font-medium transition-colors',
                 isActive
-                  ? "bg-emerald-500/20 text-emerald-400"
-                  : "text-slate-400 hover:bg-white/5 hover:text-white"
+                  ? 'bg-emerald-500/20 text-emerald-400'
+                  : 'text-slate-400 hover:bg-white/5 hover:text-white',
               )}
             >
               <item.icon className="h-4 w-4" />

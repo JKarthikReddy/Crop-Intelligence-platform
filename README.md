@@ -122,3 +122,42 @@ GitHub Actions workflow runs on every push and PR to `main`:
 4. Build
 
 See `.github/workflows/ci.yml` for details.
+
+## Commit Convention
+
+All commits **must** follow [Conventional Commits](https://www.conventionalcommits.org/):
+
+| Type | Purpose |
+|------|---------|
+| `feat:` | New feature |
+| `fix:` | Bug fix |
+| `chore:` | Maintenance / tooling |
+| `refactor:` | Code restructuring (no behavior change) |
+| `docs:` | Documentation only |
+| `test:` | Adding or updating tests |
+| `ci:` | CI/CD pipeline changes |
+
+**Examples:**
+```
+feat(backend): add crop yield prediction endpoint
+fix(frontend): resolve chart rendering on mobile
+chore(ml): update XGBoost training config
+```
+
+No vague commits like `"update"`, `"changes"`, or `"fix stuff"`.
+
+## Code Quality Enforcement
+
+| Layer | Tools | Enforcement |
+|-------|-------|-------------|
+| Frontend | ESLint, Prettier, Husky + lint-staged | Pre-commit hook blocks bad code |
+| Backend | Black, isort, Ruff, pre-commit | Pre-commit hook auto-formats |
+| Repository | `.editorconfig`, `.pre-commit-config.yaml` | Consistent formatting across all files |
+
+**Rules enforced:**
+- No `console.log` in frontend (`no-console: error`)
+- No `any` types (`@typescript-eslint/no-explicit-any: error`)
+- No unused variables (`@typescript-eslint/no-unused-vars: error`)
+- Python code auto-formatted to PEP 8 (Black)
+- Imports auto-sorted (isort)
+- No large files (>500KB) committed
