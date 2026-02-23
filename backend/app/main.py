@@ -7,6 +7,7 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
+from app.api.farms import router as farms_router
 from app.api.health import router as health_router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
@@ -45,6 +46,7 @@ def create_app() -> FastAPI:
 
     # ── Routers ──────────────────────────────────────────────────
     app.include_router(health_router)
+    app.include_router(farms_router)
 
     return app
 
