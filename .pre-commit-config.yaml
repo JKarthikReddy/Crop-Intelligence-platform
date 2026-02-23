@@ -28,3 +28,12 @@ repos:
       - id: ruff
         args: ['--fix']
         files: ^backend/
+
+  - repo: local
+    hooks:
+      - id: frontend-lint-staged
+        name: Frontend lint-staged
+        entry: npx --prefix frontend lint-staged --cwd frontend
+        language: system
+        files: ^frontend/
+        pass_filenames: false
