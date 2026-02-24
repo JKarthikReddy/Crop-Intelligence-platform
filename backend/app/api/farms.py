@@ -1,4 +1,4 @@
-"""Farm boundary ingestion endpoint."""
+"""Farm boundary ingestion and intelligence endpoints."""
 
 from typing import Annotated
 
@@ -7,8 +7,13 @@ from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
 from app.schemas.farm import FarmCreate, FarmResponse
+from app.schemas.intelligence import IntelligenceResponse
 from app.services.farm_service import create_farm
 from app.services.geometry_service import GeometryValidationError
+from app.services.intelligence_engine import (
+    IntelligenceEngineError,
+    generate_intelligence,
+)
 
 router = APIRouter(prefix="/farms", tags=["farms"])
 
@@ -36,3 +41,19 @@ async def create_farm_endpoint(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Internal error: {exc}") from exc
+
+
+@router.post("/analyze", response_model=IntelligenceResponse, status_code=200)
+async def analyze_farm(payload: FarmCreate) -> IntelligenceResponse:
+    """Generate unified intelligence for a farm boundary.
+
+    Accepts a GeoJSON farm payload, extracts spatial metadata, and
+    concurrently fetches soil, climate, forecast, and satellite data.
+    Individual service failures degrade gracefully (null sections).
+    """
+    try:
+        result = await generate_intelligence(payload.geojson)
+    except IntelligenceEngineError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return IntelligenceResponse(**result)
