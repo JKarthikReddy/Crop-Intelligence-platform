@@ -10,6 +10,7 @@ from loguru import logger
 from app.api.farms import router as farms_router
 from app.api.health import router as health_router
 from app.api.soil import router as soil_router
+from app.api.weather import router as weather_router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 
@@ -49,6 +50,7 @@ def create_app() -> FastAPI:
     app.include_router(health_router)
     app.include_router(farms_router)
     app.include_router(soil_router)
+    app.include_router(weather_router)
 
     return app
 
