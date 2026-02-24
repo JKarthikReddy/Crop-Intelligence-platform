@@ -8,6 +8,7 @@ from sqlalchemy.ext.asyncio import AsyncSession
 from app.db.session import get_db
 from app.schemas.farm import FarmCreate, FarmResponse
 from app.services.farm_service import create_farm
+from app.services.geometry_service import GeometryValidationError
 
 router = APIRouter(prefix="/farms", tags=["farms"])
 
@@ -31,7 +32,7 @@ async def create_farm_endpoint(
             geojson=payload.geojson,
         )
         return FarmResponse(**result)
-    except ValueError as exc:
+    except GeometryValidationError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Internal error: {exc}") from exc

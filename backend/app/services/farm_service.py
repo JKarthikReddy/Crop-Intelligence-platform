@@ -6,7 +6,7 @@ from geoalchemy2.shape import from_shape
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.models.farm import Farm
-from app.services.geometry_service import validate_and_extract_geometry
+from app.services.geometry_service import extract_geometry_info
 
 
 async def create_farm(
@@ -22,9 +22,9 @@ async def create_farm(
         geojson: GeoJSON Feature containing Polygon/MultiPolygon geometry.
 
     Returns:
-        Dictionary with farm id, name, centroid, and area_hectares.
+        Dictionary with farm id, name, centroid, bounds, and area_hectares.
     """
-    geom_data = validate_and_extract_geometry(geojson)
+    geom_data = extract_geometry_info(geojson)
 
     farm = Farm(
         name=name,
@@ -39,5 +39,6 @@ async def create_farm(
         "id": farm.id,
         "name": farm.name,
         "centroid": geom_data["centroid"],
+        "bounds": geom_data["bounds"],
         "area_hectares": geom_data["area_hectares"],
     }

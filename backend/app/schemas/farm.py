@@ -23,4 +23,7 @@ class FarmResponse(BaseModel):
     centroid: tuple[float, float] = Field(
         description="(latitude, longitude) of boundary centroid",
     )
+    bounds: tuple[float, float, float, float] = Field(
+        description="(minx, miny, maxx, maxy) bounding box in WGS84",
+    )
     area_hectares: float = Field(description="Farm area in hectares")
