@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from loguru import logger
 
 from app.api.farms import router as farms_router
+from app.api.forecast import router as forecast_router
 from app.api.health import router as health_router
 from app.api.soil import router as soil_router
 from app.api.weather import router as weather_router
@@ -51,6 +52,7 @@ def create_app() -> FastAPI:
     app.include_router(farms_router)
     app.include_router(soil_router)
     app.include_router(weather_router)
+    app.include_router(forecast_router)
 
     return app
 
