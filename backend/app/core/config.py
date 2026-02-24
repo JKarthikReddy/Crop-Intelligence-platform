@@ -33,6 +33,10 @@ class Settings(BaseSettings):
     # ── External APIs ────────────────────────────────────────────
     OPENWEATHER_API_KEY: str = ""
 
+    # ── Sentinel Hub ─────────────────────────────────────────────
+    SENTINEL_CLIENT_ID: str = ""
+    SENTINEL_CLIENT_SECRET: str = ""
+
 
 @lru_cache
 def get_settings() -> Settings:
