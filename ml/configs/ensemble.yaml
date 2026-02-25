@@ -1,0 +1,29 @@
+# ── Ensemble Yield Forecast Configuration ────────────────────────
+# Controls model versions, blending weights, and feature mapping.
+# Changes here propagate to prediction without code changes.
+
+models:
+  xgboost_version: "v1"
+  lstm_version: "v1"
+
+weights:
+  xgboost: 0.6
+  lstm: 0.4
+
+# Feature names expected by the XGBoost model (in order).
+# These must match the columns from feature_engineering.py
+# after drop_columns and scaling.
+tabular_feature_names:
+  - ph
+  - clay_percent
+  - organic_carbon
+  - ndvi_mean
+  - temp_avg_30d
+  - rainfall_last_30d
+  - historical_yield
+  - target_yield
+  - soil_quality_index
+  - climate_stress_index
+  - vegetation_health_score
+  - yield_momentum
+  - rainfall_efficiency
