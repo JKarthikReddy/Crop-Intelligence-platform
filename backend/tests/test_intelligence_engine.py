@@ -112,6 +112,7 @@ class TestGenerateIntelligence:
         assert "climate" in result
         assert "forecast" in result
         assert "satellite" in result
+        assert "water_model" in result
 
     @pytest.mark.asyncio
     async def test_location_has_centroid_and_area(self) -> None:
@@ -209,6 +210,26 @@ class TestPartialFailure:
 
         assert result["soil"] == MOCK_SOIL
         assert result["climate"] is None
+
+    @pytest.mark.asyncio
+    async def test_weather_failure_water_model_none(self) -> None:
+        """When climate fails, water_model degrades to None."""
+        from unittest.mock import AsyncMock
+
+        with (
+            patch(_SOIL_PATCH, new_callable=AsyncMock, return_value=MOCK_SOIL),
+            patch(
+                _WEATHER_PATCH,
+                new_callable=AsyncMock,
+                side_effect=WeatherServiceError("NASA POWER down"),
+            ),
+            patch(_FORECAST_PATCH, new_callable=AsyncMock, return_value=MOCK_FORECAST),
+            patch(_NDVI_PATCH, new_callable=AsyncMock, return_value=MOCK_NDVI),
+            patch(_SAR_PATCH, new_callable=AsyncMock, return_value=MOCK_SAR),
+        ):
+            result = await generate_intelligence(VALID_GEOJSON)
+
+        assert result["water_model"] is None
 
     @pytest.mark.asyncio
     async def test_forecast_failure_returns_none(self) -> None:
@@ -312,6 +333,8 @@ class TestPartialFailure:
         assert result["satellite"]["sar"] is None
         # Location must still be present
         assert result["location"]["area_hectares"] > 0
+        # Water model also None when climate fails
+        assert result["water_model"] is None
 
 
 # -- Geometry Failure --------------------------------------------------------

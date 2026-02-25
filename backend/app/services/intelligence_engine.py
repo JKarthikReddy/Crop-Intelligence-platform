@@ -18,6 +18,7 @@ from typing import Any
 from loguru import logger
 
 from app.services.cache_service import INTELLIGENCE_TTL, get_cache, make_cache_key, set_cache
+from app.services.et0_service import build_water_model
 from app.services.forecast_service import ForecastServiceError, fetch_forecast
 from app.services.geometry_service import GeometryValidationError, extract_geometry_info
 from app.services.satellite_service import SatelliteServiceError, fetch_ndvi, fetch_sar
@@ -48,6 +49,8 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
             - ``forecast``: 5-day forecast advisory (or None on failure)
             - ``satellite``: Dict with ``ndvi`` and ``sar`` sub-keys
                 (each None on individual failure)
+            - ``water_model``: ET0 estimate and water stress risk
+                (None if climate data unavailable)
 
     Raises:
         IntelligenceEngineError: If geometry extraction itself fails
@@ -86,6 +89,9 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
     ndvi = _sanitize_result(ndvi_result, "ndvi", SatelliteServiceError)
     sar = _sanitize_result(sar_result, "sar", SatelliteServiceError)
 
+    # ── Derived models (pure computation, no API calls) ───────────
+    water_model = build_water_model(climate)
+
     payload = {
         "location": {
             "centroid": list(geom["centroid"]),
@@ -99,6 +105,7 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
             "ndvi": ndvi,
             "sar": sar,
         },
+        "water_model": water_model,
     }
 
     await set_cache(cache_key, payload, ttl=INTELLIGENCE_TTL)
