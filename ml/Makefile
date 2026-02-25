@@ -24,10 +24,10 @@ train-xgb:
 	cd training && python train_xgboost.py
 
 train-lstm:
-	@echo "LSTM training not yet implemented (Phase 4 Step 3)"
+	cd training && python train_lstm.py
 
 # ── Full Pipeline ────────────────────────────────────────────────
-all: validate build features train-xgb
+all: validate build features train-xgb train-lstm
 
 # ── Cleanup ──────────────────────────────────────────────────────
 clean:
@@ -36,5 +36,9 @@ clean:
 	rm -f data/processed/*.json
 	rm -f models/tabular_scaler.pkl
 	rm -f models/timeseries_scaler.pkl
+	rm -f models/xgboost_yield_*.pkl
+	rm -f models/xgboost_metadata_*.json
+	rm -f models/lstm_yield_*.pt
+	rm -f models/lstm_metadata_*.json
 	rm -f logs/*.log
-	@echo "Cleaned processed data, scalers, and logs."
+	@echo "Cleaned processed data, models, scalers, and logs."
