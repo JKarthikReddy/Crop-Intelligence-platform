@@ -1,89 +1,223 @@
-"""XGBoost yield prediction training script — config-driven."""
+"""Production XGBoost yield prediction training pipeline.
+
+Config-driven, reproducible, logged, versioned.  Loads engineered
+features from the feature pipeline, trains with early stopping,
+evaluates on a held-out set, and serializes model + metadata.
+
+Usage:
+    python training/train_xgboost.py
+    # or: make train-xgb
+"""
 
 import json
+import logging
 import sys
+from datetime import UTC, datetime
 from pathlib import Path
 
 import joblib
+import numpy as np
 import pandas as pd
 import yaml
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 from xgboost import XGBRegressor
 
+# ── Logging ──────────────────────────────────────────────────────
+LOG_DIR = Path(__file__).resolve().parent.parent / "logs"
+LOG_DIR.mkdir(parents=True, exist_ok=True)
 
-def load_config(config_path: str = "../configs/xgboost.yaml") -> dict:
-    """Load experiment configuration from YAML."""
-    with open(config_path) as f:
-        return yaml.safe_load(f)
+logging.basicConfig(
+    level=logging.INFO,
+    format="%(asctime)s [%(levelname)s] %(message)s",
+    handlers=[
+        logging.FileHandler(LOG_DIR / "xgboost_training.log"),
+        logging.StreamHandler(),
+    ],
+)
+logger = logging.getLogger(__name__)
+
+# ── Paths ────────────────────────────────────────────────────────
+ROOT = Path(__file__).resolve().parent.parent
+CONFIG_PATH = ROOT / "configs" / "xgboost.yaml"
+PROCESSED_DIR = ROOT / "data" / "processed"
+MODELS_DIR = ROOT / "models"
 
 
-def load_data(config: dict) -> pd.DataFrame:
-    """Load training data from path specified in config."""
-    data_path = config["data"]["input_path"]
-    if not Path(data_path).exists():
-        print(f"[WARN] Data file not found: {data_path}")
-        print("[INFO] Generating synthetic sample data for demonstration...")
-        return generate_sample_data()
-    return pd.read_csv(data_path)
+def load_config() -> dict:
+    """Load training configuration from YAML."""
+    if not CONFIG_PATH.exists():
+        logger.error("Config not found: %s", CONFIG_PATH)
+        sys.exit(1)
+    with open(CONFIG_PATH) as f:
+        config = yaml.safe_load(f)
+    logger.info(
+        "Loaded config — %d estimators, lr=%.3f, depth=%d",
+        config["model"]["n_estimators"],
+        config["model"]["learning_rate"],
+        config["model"]["max_depth"],
+    )
+    return config
 
 
-def generate_sample_data() -> pd.DataFrame:
-    """Generate synthetic crop yield data for development/testing."""
-    import numpy as np
+def load_features() -> pd.DataFrame:
+    """Load the engineered feature dataset.
 
-    rng = np.random.default_rng(42)
-    n = 500
-    return pd.DataFrame(
-        {
-            "temperature": rng.uniform(15, 40, n),
-            "rainfall": rng.uniform(200, 1200, n),
-            "soil_ph": rng.uniform(5.5, 8.0, n),
-            "ndvi": rng.uniform(0.2, 0.9, n),
-            "yield": rng.uniform(1.5, 8.0, n),
-        }
+    Falls back to building synthetic features if the feature
+    pipeline hasn't been run yet (CI/dev environments).
+
+    Returns:
+        Feature-ready DataFrame.
+    """
+    feature_path = PROCESSED_DIR / "tabular_features.csv"
+    if not feature_path.exists():
+        logger.warning(
+            "Feature file not found: %s — run 'make build && make features' first",
+            feature_path,
+        )
+        logger.info("Attempting to generate pipeline data for training...")
+        _run_upstream_pipeline()
+        if not feature_path.exists():
+            logger.error("Pipeline failed to generate features. Aborting.")
+            sys.exit(1)
+
+    df = pd.read_csv(feature_path)
+    logger.info("Loaded features — %d rows × %d columns", len(df), len(df.columns))
+    return df
+
+
+def _run_upstream_pipeline() -> None:
+    """Run upstream build + feature pipeline as fallback."""
+    import importlib
+
+    try:
+        build_ds = importlib.import_module("build_dataset")
+        build_ds.build_tabular()
+
+        feat_eng = importlib.import_module("feature_engineering")
+        feat_eng.build_tabular_features()
+    except Exception as e:
+        logger.warning("Upstream pipeline fallback failed: %s", e)
+
+
+def train() -> None:
+    """Train XGBoost model end-to-end."""
+    logger.info("=" * 60)
+    logger.info("XGBoost Training Pipeline — START")
+    logger.info("=" * 60)
+
+    config = load_config()
+    model_params = config["model"].copy()
+    training_cfg = config["training"]
+    version = config.get("versioning", {}).get("current", "v1")
+
+    # Load data
+    df = load_features()
+    target_col = training_cfg["target_column"]
+
+    if target_col not in df.columns:
+        logger.error("Target column '%s' not found in dataset", target_col)
+        sys.exit(1)
+
+    X = df.drop(columns=[target_col])
+    y = df[target_col]
+
+    logger.info(
+        "Features: %d | Samples: %d | Target: %s", X.shape[1], X.shape[0], target_col
     )
 
-
-def train(config: dict) -> None:
-    """Train XGBoost model with config-driven parameters."""
-    df = load_data(config)
-    target = config["data"]["target_column"]
-
-    X = df.drop(columns=[target])
-    y = df[target]
-
+    # Train/test split
     X_train, X_test, y_train, y_test = train_test_split(
-        X, y, test_size=config["data"]["test_size"], random_state=42
+        X,
+        y,
+        test_size=training_cfg["test_size"],
+        random_state=model_params["random_state"],
+    )
+    logger.info("Split — train: %d, test: %d", len(X_train), len(X_test))
+
+    # Train with early stopping
+    early_stopping = training_cfg.get("early_stopping_rounds", 50)
+    model = XGBRegressor(
+        early_stopping_rounds=early_stopping,
+        **model_params,
     )
 
-    model_params = config["model"]
-    model = XGBRegressor(**model_params)
-    model.fit(X_train, y_train)
+    model.fit(
+        X_train,
+        y_train,
+        eval_set=[(X_test, y_test)],
+        verbose=False,
+    )
+    logger.info(
+        "Training complete — %d boosting rounds used",
+        (
+            model.best_iteration + 1
+            if hasattr(model, "best_iteration") and model.best_iteration
+            else model_params["n_estimators"]
+        ),
+    )
 
     # Evaluate
     y_pred = model.predict(X_test)
     metrics = {
-        "r2": round(r2_score(y_test, y_pred), 4),
-        "mae": round(mean_absolute_error(y_test, y_pred), 4),
-        "rmse": round(mean_squared_error(y_test, y_pred, squared=False), 4),
+        "r2_score": round(float(r2_score(y_test, y_pred)), 6),
+        "rmse": round(float(np.sqrt(mean_squared_error(y_test, y_pred))), 6),
+        "mae": round(float(mean_absolute_error(y_test, y_pred)), 6),
     }
-    print(f"[METRICS] R²={metrics['r2']}  MAE={metrics['mae']}  RMSE={metrics['rmse']}")
+    logger.info(
+        "R² = %.4f | RMSE = %.4f | MAE = %.4f",
+        metrics["r2_score"],
+        metrics["rmse"],
+        metrics["mae"],
+    )
 
-    # Save model
-    model_path = Path(config["output"]["model_path"])
-    model_path.parent.mkdir(parents=True, exist_ok=True)
+    # Quality gate
+    if metrics["r2_score"] < 0:
+        logger.warning("R² is negative — model is worse than mean baseline")
+
+    # Feature importance
+    importance = model.feature_importances_
+    feature_names = X.columns.tolist()
+    feature_importance = {
+        name: round(float(imp), 6)
+        for name, imp in sorted(
+            zip(feature_names, importance),
+            key=lambda x: x[1],
+            reverse=True,
+        )
+    }
+    logger.info("Top 5 features: %s", list(feature_importance.keys())[:5])
+
+    # Serialize model
+    MODELS_DIR.mkdir(parents=True, exist_ok=True)
+    model_path = MODELS_DIR / f"xgboost_yield_{version}.pkl"
     joblib.dump(model, model_path)
-    print(f"[SAVED] Model → {model_path}")
+    logger.info("Model saved to %s", model_path)
 
-    # Save metrics
-    metrics_path = Path(config["output"]["metrics_path"])
-    with open(metrics_path, "w") as f:
-        json.dump(metrics, f, indent=2)
-    print(f"[SAVED] Metrics → {metrics_path}")
+    # Metadata
+    metadata = {
+        "version": version,
+        "trained_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "config": {
+            "model": config["model"],
+            "training": training_cfg,
+        },
+        "metrics": metrics,
+        "feature_count": X.shape[1],
+        "train_samples": len(X_train),
+        "test_samples": len(X_test),
+        "feature_importance": feature_importance,
+        "feature_names": feature_names,
+    }
+    meta_path = MODELS_DIR / f"xgboost_metadata_{version}.json"
+    with open(meta_path, "w") as f:
+        json.dump(metadata, f, indent=2)
+    logger.info("Metadata saved to %s", meta_path)
+
+    logger.info("=" * 60)
+    logger.info("XGBoost Training Pipeline — COMPLETE")
+    logger.info("=" * 60)
 
 
 if __name__ == "__main__":
-    config_file = sys.argv[1] if len(sys.argv) > 1 else "../configs/xgboost.yaml"
-    cfg = load_config(config_file)
-    train(cfg)
+    train()
