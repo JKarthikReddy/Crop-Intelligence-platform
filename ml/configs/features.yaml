@@ -1,0 +1,32 @@
+# ── Feature Engineering Configuration ────────────────────────────
+# All feature transformations are defined here — never hardcoded.
+# Formulas reference column names from processed tabular.csv.
+# Changes here automatically propagate to training AND inference.
+
+tabular_features:
+  soil_quality_index:
+    formula: "0.4 * organic_carbon + 0.3 * clay_percent + 0.3 * ph"
+    description: "Composite soil health score"
+
+  climate_stress_index:
+    formula: "temp_avg_30d * 0.5 - rainfall_last_30d * 0.2"
+    description: "Heat-moisture stress indicator (higher = more stress)"
+
+  vegetation_health_score:
+    formula: "ndvi_mean * 100"
+    description: "Scaled NDVI vegetation index (0-100)"
+
+  yield_momentum:
+    formula: "historical_yield * ndvi_mean"
+    description: "Interaction: past yield × current vegetation"
+
+  rainfall_efficiency:
+    formula: "rainfall_last_30d / (temp_avg_30d + 1)"
+    description: "Effective moisture adjusted for evapotranspiration"
+
+drop_columns:
+  - farm_id
+
+scaling:
+  tabular: "standard"       # StandardScaler for tabular features
+  timeseries: "minmax"      # MinMaxScaler for time-series sequences

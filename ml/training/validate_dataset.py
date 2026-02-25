@@ -13,6 +13,7 @@ import logging
 import sys
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 import yaml
 
@@ -90,14 +91,48 @@ def validate_timeseries(schema: dict) -> bool:
     return validate_columns(df, required, "timeseries")
 
 
+def validate_feature_quality(path: Path, name: str) -> bool:
+    """Validate that a processed CSV has no NaN or Inf values.
+
+    Args:
+        path: Path to the CSV file.
+        name: Human-readable label for logging.
+
+    Returns:
+        True if clean, False otherwise.
+    """
+    if not path.exists():
+        logger.warning("Feature file not found: %s — skipping", path)
+        return True
+
+    df = pd.read_csv(path)
+    nan_count = int(df.isna().sum().sum())
+    inf_count = int(np.isinf(df.select_dtypes(include=[np.number])).sum().sum())
+
+    if nan_count > 0:
+        logger.error("[%s] %d NaN values detected", name, nan_count)
+        return False
+    if inf_count > 0:
+        logger.error("[%s] %d Inf values detected", name, inf_count)
+        return False
+
+    logger.info("[%s] Quality valid — %d rows, 0 NaN, 0 Inf", name, len(df))
+    return True
+
+
 def main() -> None:
-    """Run all schema validations."""
+    """Run all schema and quality validations."""
     logger.info("Starting dataset validation...")
     schema = load_schema()
+
+    processed_dir = ROOT / "data" / "processed"
 
     results = [
         validate_tabular(schema),
         validate_timeseries(schema),
+        validate_feature_quality(
+            processed_dir / "tabular_features.csv", "tabular_features"
+        ),
     ]
 
     if all(results):
