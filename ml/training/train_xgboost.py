@@ -100,6 +100,48 @@ def _run_upstream_pipeline() -> None:
         logger.warning("Upstream pipeline fallback failed: %s", e)
 
 
+def register_model(entry: dict) -> None:
+    """Append a model entry to the registry.
+
+    Creates the registry file if it does not exist.
+
+    Args:
+        entry: Model metadata dict to register.
+    """
+    registry_path = MODELS_DIR / "registry" / "registry.json"
+    registry_path.parent.mkdir(parents=True, exist_ok=True)
+
+    if registry_path.exists():
+        with open(registry_path) as f:
+            registry = json.load(f)
+    else:
+        registry = {"models": []}
+
+    # Prevent duplicate version registration
+    for existing in registry["models"]:
+        if (
+            existing["model_type"] == entry["model_type"]
+            and existing["version"] == entry["version"]
+        ):
+            logger.warning(
+                "Model %s %s already registered — skipping",
+                entry["model_type"],
+                entry["version"],
+            )
+            return
+
+    registry["models"].append(entry)
+
+    with open(registry_path, "w") as f:
+        json.dump(registry, f, indent=2)
+    logger.info(
+        "Registered %s %s as %s",
+        entry["model_type"],
+        entry["version"],
+        entry["status"],
+    )
+
+
 def train() -> None:
     """Train XGBoost model end-to-end."""
     logger.info("=" * 60)
@@ -188,9 +230,14 @@ def train() -> None:
     }
     logger.info("Top 5 features: %s", list(feature_importance.keys())[:5])
 
-    # Serialize model
+    # Serialize model (with overwrite prevention)
     MODELS_DIR.mkdir(parents=True, exist_ok=True)
     model_path = MODELS_DIR / f"xgboost_yield_{version}.pkl"
+    if model_path.exists():
+        raise ValueError(
+            f"Model version {version} already exists at {model_path}. "
+            "Bump the version in configs/xgboost.yaml before retraining."
+        )
     joblib.dump(model, model_path)
     logger.info("Model saved to %s", model_path)
 
@@ -213,6 +260,19 @@ def train() -> None:
     with open(meta_path, "w") as f:
         json.dump(metadata, f, indent=2)
     logger.info("Metadata saved to %s", meta_path)
+
+    # Register model in registry
+    register_model(
+        {
+            "model_type": "xgboost",
+            "version": version,
+            "status": "staging",
+            "metrics": metrics,
+            "dataset_version": "v1.0",
+            "feature_config_version": "v1",
+            "trained_at": datetime.now(tz=UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+    )
 
     logger.info("=" * 60)
     logger.info("XGBoost Training Pipeline — COMPLETE")

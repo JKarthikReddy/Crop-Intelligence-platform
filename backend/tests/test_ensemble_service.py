@@ -285,3 +285,71 @@ class TestIntelligenceIntegration:
 
         result = _compute_yield_forecast(None, None, None)
         assert result is None
+
+
+# ── Registry Integration Tests ───────────────────────────────────
+class TestRegistryLookup:
+    """Test registry-driven model version resolution."""
+
+    def test_get_production_version_from_registry(self, service, tmp_path):
+        """Reads production version from registry JSON."""
+        import json
+
+        registry = {
+            "models": [
+                {"model_type": "xgboost", "version": "v1", "status": "archived"},
+                {"model_type": "xgboost", "version": "v2", "status": "production"},
+            ]
+        }
+        reg_path = tmp_path / "registry.json"
+        reg_path.write_text(json.dumps(registry))
+
+        with patch("app.services.ml_ensemble_service._REGISTRY_PATH", reg_path):
+            version = service._get_production_version("xgboost")
+
+        assert version == "v2"
+
+    def test_get_production_version_no_registry(self, service, tmp_path):
+        """Returns None when registry file is missing."""
+        missing = tmp_path / "nonexistent.json"
+
+        with patch("app.services.ml_ensemble_service._REGISTRY_PATH", missing):
+            version = service._get_production_version("xgboost")
+
+        assert version is None
+
+    def test_get_production_version_no_production_entry(self, service, tmp_path):
+        """Returns None when no production entry exists."""
+        import json
+
+        registry = {
+            "models": [
+                {"model_type": "xgboost", "version": "v1", "status": "staging"},
+            ]
+        }
+        reg_path = tmp_path / "registry.json"
+        reg_path.write_text(json.dumps(registry))
+
+        with patch("app.services.ml_ensemble_service._REGISTRY_PATH", reg_path):
+            version = service._get_production_version("xgboost")
+
+        assert version is None
+
+    def test_single_production_per_type(self, service, tmp_path):
+        """Only one production entry should be returned."""
+        import json
+
+        registry = {
+            "models": [
+                {"model_type": "lstm", "version": "v1", "status": "archived"},
+                {"model_type": "lstm", "version": "v2", "status": "production"},
+                {"model_type": "lstm", "version": "v3", "status": "staging"},
+            ]
+        }
+        reg_path = tmp_path / "registry.json"
+        reg_path.write_text(json.dumps(registry))
+
+        with patch("app.services.ml_ensemble_service._REGISTRY_PATH", reg_path):
+            version = service._get_production_version("lstm")
+
+        assert version == "v2"

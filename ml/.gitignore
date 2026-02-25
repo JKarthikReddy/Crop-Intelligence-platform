@@ -12,12 +12,15 @@ data/processed/*
 *.npy
 
 # Model artifacts
-models/
-*.pt
-*.pth
-*.pkl
-*.joblib
-*.onnx
+models/*.pt
+models/*.pth
+models/*.pkl
+models/*.joblib
+models/*.onnx
+models/*.json
+!models/registry/
+!models/registry/**
+!models/.gitkeep
 
 # Logs
 logs/*

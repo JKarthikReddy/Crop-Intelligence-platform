@@ -16,6 +16,7 @@ fall back to the available model or return ``None``.
 
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
@@ -31,6 +32,7 @@ _ROOT_DIR = _BACKEND_DIR.parent
 _ML_DIR = _ROOT_DIR / "ml"
 _CONFIGS_DIR = _ML_DIR / "configs"
 _MODELS_DIR = _ML_DIR / "models"
+_REGISTRY_PATH = _MODELS_DIR / "registry" / "registry.json"
 
 
 class EnsembleServiceError(Exception):
@@ -99,12 +101,55 @@ class EnsembleService:
         )
         return config
 
+    @staticmethod
+    def _get_production_version(model_type: str) -> str | None:
+        """Look up the production version for a model type from the registry.
+
+        Reads ``ml/models/registry/registry.json`` and returns the
+        version string of the entry whose ``status`` is
+        ``"production"`` for the given *model_type*.
+
+        Falls back to ``None`` if the registry is missing or no
+        production entry exists.
+
+        Args:
+            model_type: ``"xgboost"`` or ``"lstm"``.
+
+        Returns:
+            Version string (e.g. ``"v1"``) or ``None``.
+        """
+        if not _REGISTRY_PATH.exists():
+            logger.warning("Model registry not found: {}", _REGISTRY_PATH)
+            return None
+
+        try:
+            with open(_REGISTRY_PATH) as f:
+                registry = json.load(f)
+
+            for model in registry.get("models", []):
+                if model.get("model_type") == model_type and model.get("status") == "production":
+                    logger.info(
+                        "Registry: {} production version = {}",
+                        model_type,
+                        model["version"],
+                    )
+                    return model["version"]
+
+            logger.warning("No production {} model in registry", model_type)
+            return None
+        except Exception as exc:
+            logger.error("Failed to read model registry: {}", exc)
+            return None
+
     def _load_xgboost(self):
-        """Load the versioned XGBoost model artifact."""
+        """Load the production XGBoost model from the registry."""
         try:
             import joblib
 
-            version = self.config.get("models", {}).get("xgboost_version", "v1")
+            version = self._get_production_version("xgboost")
+            if version is None:
+                # Fall back to config
+                version = self.config.get("models", {}).get("xgboost_version", "v1")
             path = _MODELS_DIR / f"xgboost_yield_{version}.pkl"
             if not path.exists():
                 logger.warning("XGBoost model not found: {}", path)
@@ -117,7 +162,7 @@ class EnsembleService:
             return None
 
     def _load_lstm(self):
-        """Load the versioned LSTM model artifact."""
+        """Load the production LSTM model from the registry."""
         try:
             import torch
 
@@ -132,7 +177,10 @@ class EnsembleService:
             with open(lstm_config_path) as f:
                 lstm_cfg = yaml.safe_load(f)
 
-            version = self.config.get("models", {}).get("lstm_version", "v1")
+            version = self._get_production_version("lstm")
+            if version is None:
+                # Fall back to config
+                version = self.config.get("models", {}).get("lstm_version", "v1")
             model_path = _MODELS_DIR / f"lstm_yield_{version}.pt"
             if not model_path.exists():
                 logger.warning("LSTM model not found: {}", model_path)
@@ -208,10 +256,12 @@ class EnsembleService:
         return {
             "xgboost_prediction": round(xgb_pred, 2) if xgb_pred is not None else None,
             "lstm_prediction": round(lstm_pred, 2) if lstm_pred is not None else None,
-            "ensemble_prediction": round(ensemble_pred, 2) if ensemble_pred is not None else None,
+            "ensemble_prediction": (round(ensemble_pred, 2) if ensemble_pred is not None else None),
             "model_versions": {
-                "xgboost": self.config.get("models", {}).get("xgboost_version", "v1"),
-                "lstm": self.config.get("models", {}).get("lstm_version", "v1"),
+                "xgboost": self._get_production_version("xgboost")
+                or self.config.get("models", {}).get("xgboost_version", "v1"),
+                "lstm": self._get_production_version("lstm")
+                or self.config.get("models", {}).get("lstm_version", "v1"),
             },
             "weights": self.config.get("weights", {}),
         }
