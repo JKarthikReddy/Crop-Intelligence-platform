@@ -17,6 +17,7 @@ fall back to the available model or return ``None``.
 from __future__ import annotations
 
 import json
+import time
 from pathlib import Path
 from typing import Any
 
@@ -247,11 +248,22 @@ class EnsembleService:
         if not self._loaded:
             self.load_models()
 
+        t_start = time.perf_counter()
+
         xgb_pred = self._predict_xgboost(tabular_features)
         lstm_pred = self._predict_lstm(weather_sequence)
 
         # Weighted ensemble
         ensemble_pred = self._blend(xgb_pred, lstm_pred)
+
+        duration_ms = round((time.perf_counter() - t_start) * 1000, 3)
+        logger.info(
+            "Ensemble predict | xgb={} | lstm={} | blend={} | took={}ms",
+            round(xgb_pred, 4) if xgb_pred is not None else None,
+            round(lstm_pred, 4) if lstm_pred is not None else None,
+            round(ensemble_pred, 4) if ensemble_pred is not None else None,
+            duration_ms,
+        )
 
         return {
             "xgboost_prediction": round(xgb_pred, 2) if xgb_pred is not None else None,
