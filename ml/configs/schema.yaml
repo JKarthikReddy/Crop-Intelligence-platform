@@ -1,0 +1,25 @@
+# ── Dataset Schema Contracts ─────────────────────────────────────
+# Enforced before any training run to ensure data quality.
+# Schema violations block training with a clear error message.
+
+tabular_schema:
+  description: "Tabular features for XGBoost yield prediction"
+  required_columns:
+    - farm_id
+    - ph
+    - clay_percent
+    - organic_carbon
+    - ndvi_mean
+    - temp_avg_30d
+    - rainfall_last_30d
+    - historical_yield
+    - target_yield
+
+timeseries_schema:
+  description: "Monthly time-series for LSTM sequence modeling"
+  required_columns:
+    - farm_id
+    - date
+    - temperature
+    - rainfall
+    - radiation

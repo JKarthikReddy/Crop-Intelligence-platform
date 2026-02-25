@@ -1,9 +1,15 @@
 # Datasets
-data/
+data/raw/*
+data/interim/*
+data/processed/*
+!data/raw/.gitkeep
+!data/interim/.gitkeep
+!data/processed/.gitkeep
 *.csv
 *.parquet
 *.h5
 *.npz
+*.npy
 
 # Model artifacts
 models/
@@ -12,6 +18,10 @@ models/
 *.pkl
 *.joblib
 *.onnx
+
+# Logs
+logs/*
+!logs/.gitkeep
 
 # Jupyter
 .ipynb_checkpoints
