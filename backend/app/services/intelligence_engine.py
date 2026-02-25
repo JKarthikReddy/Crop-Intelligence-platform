@@ -20,7 +20,7 @@ from loguru import logger
 from app.services.cache_service import INTELLIGENCE_TTL, get_cache, make_cache_key, set_cache
 from app.services.forecast_service import ForecastServiceError, fetch_forecast
 from app.services.geometry_service import GeometryValidationError, extract_geometry_info
-from app.services.satellite_service import SatelliteServiceError, fetch_ndvi
+from app.services.satellite_service import SatelliteServiceError, fetch_ndvi, fetch_sar
 from app.services.soil_service import SoilServiceError, fetch_soil_data
 from app.services.weather_service import WeatherServiceError, fetch_nasa_weather
 
@@ -33,7 +33,7 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
     """Generate unified intelligence for a farm boundary.
 
     Accepts a GeoJSON Feature, extracts spatial metadata, then
-    concurrently fetches soil, climate, forecast, and satellite data.
+    concurrently fetches soil, climate, forecast, NDVI, and SAR data.
     Individual service failures are logged and returned as ``None``
     sections rather than crashing the entire response.
 
@@ -46,7 +46,8 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
             - ``soil``: Soil chemistry (or None on failure)
             - ``climate``: 30-day historical weather (or None on failure)
             - ``forecast``: 5-day forecast advisory (or None on failure)
-            - ``satellite``: NDVI vegetation health (or None on failure)
+            - ``satellite``: Dict with ``ndvi`` and ``sar`` sub-keys
+                (each None on individual failure)
 
     Raises:
         IntelligenceEngineError: If geometry extraction itself fails
@@ -69,11 +70,12 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
         return cached
 
     # ── Parallel data fetch with graceful degradation ────────────
-    soil_result, climate_result, forecast_result, satellite_result = await asyncio.gather(
+    soil_result, climate_result, forecast_result, ndvi_result, sar_result = await asyncio.gather(
         fetch_soil_data(lat, lon),
         fetch_nasa_weather(lat, lon),
         fetch_forecast(lat, lon),
         fetch_ndvi(bounds),
+        fetch_sar(bounds),
         return_exceptions=True,
     )
 
@@ -81,7 +83,8 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
     soil = _sanitize_result(soil_result, "soil", SoilServiceError)
     climate = _sanitize_result(climate_result, "climate", WeatherServiceError)
     forecast = _sanitize_result(forecast_result, "forecast", ForecastServiceError)
-    satellite = _sanitize_result(satellite_result, "satellite", SatelliteServiceError)
+    ndvi = _sanitize_result(ndvi_result, "ndvi", SatelliteServiceError)
+    sar = _sanitize_result(sar_result, "sar", SatelliteServiceError)
 
     payload = {
         "location": {
@@ -92,7 +95,10 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
         "soil": soil,
         "climate": climate,
         "forecast": forecast,
-        "satellite": satellite,
+        "satellite": {
+            "ndvi": ndvi,
+            "sar": sar,
+        },
     }
 
     await set_cache(cache_key, payload, ttl=INTELLIGENCE_TTL)

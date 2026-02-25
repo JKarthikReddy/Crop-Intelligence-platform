@@ -20,6 +20,7 @@ SOIL_TTL = 86_400  # 24 hours (soil data rarely changes)
 WEATHER_TTL = 3_600  # 1 hour
 FORECAST_TTL = 1_800  # 30 minutes (forecast updates frequently)
 NDVI_TTL = 43_200  # 12 hours (satellite imagery updates daily)
+SAR_TTL = 10_800  # 3 hours (radar imagery, cloud-independent)
 INTELLIGENCE_TTL = 1_800  # 30 minutes (full intelligence payload)
 
 
