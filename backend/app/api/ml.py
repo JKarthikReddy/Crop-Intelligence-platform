@@ -1,12 +1,19 @@
 """ML inference API — production yield prediction endpoints.
 
 Provides:
-- ``POST /ml/predict-yield`` — structured yield prediction
+- ``POST /ml/predict-yield`` — structured yield prediction with drift detection
 - ``GET /ml/health`` — ML subsystem health check
+- ``GET /ml/monitor`` — prediction distribution & drift monitoring
 
 All inference is CPU-only, < 100ms after initial model load.
 Models are loaded once via the singleton ensemble service.
 No training logic permitted in this module.
+
+Future Integration Hooks:
+    # TODO: Prometheus metrics middleware for request latency histograms
+    # TODO: Grafana dashboard JSON provisioning
+    # TODO: Alert webhook on drift_warning or anomaly detection
+    # TODO: Slack integration for critical drift notifications
 """
 
 from __future__ import annotations
@@ -21,7 +28,9 @@ from app.schemas.prediction import (
     YieldPredictionRequest,
     YieldPredictionResponse,
 )
+from app.services.drift_service import drift_detector
 from app.services.ml_ensemble_service import ensemble_service
+from app.services.prediction_logger import prediction_logger
 
 router = APIRouter(prefix="/ml", tags=["ml"])
 
@@ -65,6 +74,25 @@ async def predict_yield(
             weather_sequence=weather_seq,
         )
 
+        # ── Drift Detection ──────────────────────────────────────
+        drift_flags = drift_detector.detect_feature_drift(tabular_dict)
+
+        # ── Anomaly Detection ────────────────────────────────────
+        ensemble_pred = raw_result.get("ensemble_prediction")
+        anomaly_flags = drift_detector.detect_anomaly(ensemble_pred)
+
+        # ── Record prediction for distribution tracking ──────────
+        if ensemble_pred is not None:
+            drift_detector.record_prediction(ensemble_pred)
+
+        # ── Audit log (no PII) ───────────────────────────────────
+        prediction_logger.log_prediction(
+            inputs=tabular_dict,
+            prediction_result=raw_result,
+            drift_flags=drift_flags,
+            anomaly_flags=anomaly_flags,
+        )
+
         latency_ms = round((time.perf_counter() - start) * 1000, 2)
 
         prediction = PredictionResult(
@@ -73,13 +101,16 @@ async def predict_yield(
             ensemble_prediction=raw_result.get("ensemble_prediction"),
             model_versions=raw_result.get("model_versions", {}),
             weights=raw_result.get("weights", {}),
+            drift_flags=drift_flags,
+            anomaly_flags=anomaly_flags,
         )
 
         logger.info(
-            "ML predict-yield | ensemble={} | latency={}ms | versions={}",
+            "ML predict-yield | ensemble={} | latency={}ms | versions={} | drifted={}",
             prediction.ensemble_prediction,
             latency_ms,
             prediction.model_versions,
+            [k for k, v in drift_flags.items() if v],
         )
 
         return YieldPredictionResponse(
@@ -125,3 +156,38 @@ async def ml_health() -> dict:
             "lstm": ensemble_service.config.get("models", {}).get("lstm_version", "unknown"),
         },
     }
+
+
+@router.get(
+    "/monitor",
+    summary="ML monitoring & drift status",
+    description="Returns prediction distribution stats, drift warnings, "
+    "and baseline metadata for DevOps integration.",
+)
+async def ml_monitor() -> dict:
+    """Return ML monitoring and drift detection status.
+
+    Tracks:
+    - Rolling average of recent predictions
+    - Global drift warning (vs. training baseline)
+    - Prediction count and window configuration
+    - Total predictions logged
+
+    Future Integration Hooks:
+        # TODO: Expose as Prometheus /metrics endpoint
+        # TODO: Wire to Grafana JSON data source
+        # TODO: Slack webhook on drift_warning=True
+    """
+    monitoring = drift_detector.get_monitoring_summary()
+
+    # Add model version info
+    xgb_version = ensemble_service.config.get("models", {}).get("xgboost_version", "unknown")
+    lstm_version = ensemble_service.config.get("models", {}).get("lstm_version", "unknown")
+
+    monitoring["model_versions"] = {
+        "xgboost": xgb_version,
+        "lstm": lstm_version,
+    }
+    monitoring["total_predictions_logged"] = prediction_logger.get_log_count()
+
+    return monitoring

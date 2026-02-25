@@ -76,6 +76,14 @@ class PredictionResult(BaseModel):
     ensemble_prediction: float | None = None
     model_versions: dict[str, str] = Field(default_factory=dict)
     weights: dict[str, float] = Field(default_factory=dict)
+    drift_flags: dict[str, bool] = Field(
+        default_factory=dict,
+        description="Per-feature drift flags (True = drifted beyond z-score threshold)",
+    )
+    anomaly_flags: dict[str, bool] = Field(
+        default_factory=dict,
+        description="Prediction anomaly flags (negative yield, extreme spike, etc.)",
+    )
 
 
 class YieldPredictionResponse(BaseModel):

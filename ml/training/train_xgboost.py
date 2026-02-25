@@ -82,7 +82,7 @@ def load_features() -> pd.DataFrame:
             sys.exit(1)
 
     df = pd.read_csv(feature_path)
-    logger.info("Loaded features — %d rows × %d columns", len(df), len(df.columns))
+    logger.info("Loaded features: %d rows x %d columns", len(df), len(df.columns))
     return df
 
 
@@ -161,7 +161,7 @@ def train() -> None:
         logger.error("Target column '%s' not found in dataset", target_col)
         sys.exit(1)
 
-    X = df.drop(columns=[target_col])
+    X = df.drop(columns=[target_col])  # noqa: N806
     y = df[target_col]
 
     logger.info(
@@ -169,7 +169,7 @@ def train() -> None:
     )
 
     # Train/test split
-    X_train, X_test, y_train, y_test = train_test_split(
+    X_train, X_test, y_train, y_test = train_test_split(  # noqa: N806
         X,
         y,
         test_size=training_cfg["test_size"],
@@ -223,7 +223,7 @@ def train() -> None:
     feature_importance = {
         name: round(float(imp), 6)
         for name, imp in sorted(
-            zip(feature_names, importance),
+            zip(feature_names, importance, strict=True),
             key=lambda x: x[1],
             reverse=True,
         )
@@ -240,6 +240,28 @@ def train() -> None:
         )
     joblib.dump(model, model_path)
     logger.info("Model saved to %s", model_path)
+
+    # ── Baseline Feature Statistics (for drift detection) ────────
+    baseline_stats: dict[str, dict[str, float]] = {}
+    for col in X.columns:
+        baseline_stats[col] = {
+            "mean": round(float(X[col].mean()), 6),
+            "std": round(float(X[col].std()), 6),
+            "min": round(float(X[col].min()), 6),
+            "max": round(float(X[col].max()), 6),
+        }
+    baseline_stats["__target__"] = {
+        "mean": round(float(y.mean()), 6),
+        "std": round(float(y.std()), 6),
+        "min": round(float(y.min()), 6),
+        "max": round(float(y.max()), 6),
+    }
+    baseline_path = MODELS_DIR / f"xgboost_baseline_{version}.json"
+    with open(baseline_path, "w") as f:
+        json.dump(baseline_stats, f, indent=2)
+    logger.info(
+        "Baseline stats saved to %s (%d features)", baseline_path, len(X.columns)
+    )
 
     # Metadata
     metadata = {
