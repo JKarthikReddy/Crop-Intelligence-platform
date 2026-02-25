@@ -14,6 +14,18 @@ services:
       - postgres
       - redis
 
+  frontend:
+    build:
+      context: ..
+      dockerfile: docker/frontend.Dockerfile
+    container_name: crop_frontend
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://backend:8000
+    depends_on:
+      - backend
+
   postgres:
     image: postgis/postgis:15-3.3
     container_name: crop_postgres

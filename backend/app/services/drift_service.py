@@ -29,7 +29,8 @@ _SERVICE_DIR = Path(__file__).resolve().parent
 _BACKEND_DIR = _SERVICE_DIR.parent.parent
 _ROOT_DIR = _BACKEND_DIR.parent
 _ML_DIR = _ROOT_DIR / "ml"
-_MODELS_DIR = _ML_DIR / "models"
+_CONFIGS_DIR = _ML_DIR / "configs"
+_BASELINES_DIR = _CONFIGS_DIR / "baselines"
 
 
 class DriftDetector:
@@ -64,7 +65,7 @@ class DriftDetector:
         self.baseline_stats: dict = {}
         self._target_stats: dict = {}
 
-        path = baseline_path or _MODELS_DIR / "xgboost_baseline_v1.json"
+        path = baseline_path or _BASELINES_DIR / "xgboost_baseline_v1.json"
         self._load_baseline(path)
 
     def _load_baseline(self, path: Path) -> None:

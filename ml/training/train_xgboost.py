@@ -263,6 +263,14 @@ def train() -> None:
         "Baseline stats saved to %s (%d features)", baseline_path, len(X.columns)
     )
 
+    # Also save to tracked configs/baselines/ for clone-safe drift detection
+    baselines_dir = ROOT / "configs" / "baselines"
+    baselines_dir.mkdir(parents=True, exist_ok=True)
+    tracked_baseline = baselines_dir / f"xgboost_baseline_{version}.json"
+    with open(tracked_baseline, "w") as f:
+        json.dump(baseline_stats, f, indent=2)
+    logger.info("Tracked baseline saved to %s", tracked_baseline)
+
     # Metadata
     metadata = {
         "version": version,

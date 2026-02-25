@@ -22,6 +22,8 @@ models/*.json
 !models/registry/**
 !models/.gitkeep
 
+# Baselines are config — tracked in configs/baselines/
+
 # Logs
 logs/*
 !logs/.gitkeep

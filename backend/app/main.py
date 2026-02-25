@@ -2,6 +2,7 @@
 
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
@@ -17,6 +18,33 @@ from app.api.weather import router as weather_router
 from app.core.config import get_settings
 from app.core.logging import setup_logging
 
+# ── Paths ────────────────────────────────────────────────────────
+_BACKEND_DIR = Path(__file__).resolve().parent.parent
+_ROOT_DIR = _BACKEND_DIR.parent
+_ML_DIR = _ROOT_DIR / "ml"
+
+
+def validate_model_artifacts() -> None:
+    """Check that critical ML artifacts are present on disk.
+
+    Raises ``RuntimeError`` with an actionable message listing all
+    missing files so operators can run ``make all`` before starting.
+    """
+    required_files = {
+        "Model registry": _ML_DIR / "models" / "registry" / "registry.json",
+        "Drift baseline": _ML_DIR / "configs" / "baselines" / "xgboost_baseline_v1.json",
+    }
+
+    missing = [
+        f"  - {label}: {path}" for label, path in required_files.items() if not path.exists()
+    ]
+
+    if missing:
+        msg = "Missing model artifacts (run 'cd ml && make all'):\n" + "\n".join(missing)
+        logger.warning(msg)
+    else:
+        logger.info("All model artifacts validated")
+
 
 @asynccontextmanager
 async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
@@ -24,6 +52,7 @@ async def lifespan(_app: FastAPI) -> AsyncGenerator[None, None]:
     setup_logging()
     settings = get_settings()
     logger.info("{} v{} starting up", settings.APP_NAME, settings.VERSION)
+    validate_model_artifacts()
     yield
     logger.info("{} shutting down", settings.APP_NAME)
 

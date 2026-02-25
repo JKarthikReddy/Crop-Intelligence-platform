@@ -1,0 +1,30 @@
+{
+  "models": [
+    {
+      "model_type": "xgboost",
+      "version": "v1",
+      "status": "production",
+      "metrics": {
+        "r2_score": 0.8688,
+        "rmse": 0.3801,
+        "mae": 0.3049
+      },
+      "dataset_version": "v1.0",
+      "feature_config_version": "v1",
+      "trained_at": "2026-02-22T12:00:00Z"
+    },
+    {
+      "model_type": "lstm",
+      "version": "v1",
+      "status": "production",
+      "metrics": {
+        "r2_score": 0.6932,
+        "rmse": 0.1585,
+        "mae": 0.1255
+      },
+      "dataset_version": "v1.0",
+      "feature_config_version": "v1",
+      "trained_at": "2026-02-22T14:00:00Z"
+    }
+  ]
+}

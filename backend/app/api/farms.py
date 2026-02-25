@@ -1,4 +1,4 @@
-"""Farm boundary ingestion and intelligence endpoints."""
+"""Farm boundary ingestion, CRUD, and intelligence endpoints."""
 
 from typing import Annotated
 
@@ -6,9 +6,15 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
-from app.schemas.farm import FarmCreate, FarmResponse
+from app.schemas.farm import FarmCreate, FarmListItem, FarmResponse, FarmUpdate
 from app.schemas.intelligence import IntelligenceResponse
-from app.services.farm_service import create_farm
+from app.services.farm_service import (
+    create_farm,
+    delete_farm,
+    get_farm,
+    list_farms,
+    update_farm,
+)
 from app.services.geometry_service import GeometryValidationError
 from app.services.intelligence_engine import (
     IntelligenceEngineError,
@@ -41,6 +47,52 @@ async def create_farm_endpoint(
         raise HTTPException(status_code=422, detail=str(exc)) from exc
     except Exception as exc:
         raise HTTPException(status_code=500, detail=f"Internal error: {exc}") from exc
+
+
+@router.get("/", response_model=list[FarmListItem])
+async def list_farms_endpoint(session: DbSession) -> list[FarmListItem]:
+    """List all registered farms (id + name)."""
+    farms = await list_farms(session)
+    return [FarmListItem(**f) for f in farms]
+
+
+@router.get("/{farm_id}", response_model=FarmListItem)
+async def get_farm_endpoint(farm_id: int, session: DbSession) -> FarmListItem:
+    """Retrieve a single farm by ID."""
+    farm = await get_farm(session, farm_id)
+    if farm is None:
+        raise HTTPException(status_code=404, detail=f"Farm {farm_id} not found")
+    return FarmListItem(**farm)
+
+
+@router.put("/{farm_id}", response_model=FarmListItem)
+async def update_farm_endpoint(
+    farm_id: int,
+    payload: FarmUpdate,
+    session: DbSession,
+) -> FarmListItem:
+    """Update a farm's name and/or boundary."""
+    try:
+        farm = await update_farm(
+            session=session,
+            farm_id=farm_id,
+            name=payload.name,
+            geojson=payload.geojson,
+        )
+    except GeometryValidationError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    if farm is None:
+        raise HTTPException(status_code=404, detail=f"Farm {farm_id} not found")
+    return FarmListItem(**farm)
+
+
+@router.delete("/{farm_id}", status_code=204)
+async def delete_farm_endpoint(farm_id: int, session: DbSession) -> None:
+    """Delete a farm by ID."""
+    deleted = await delete_farm(session, farm_id)
+    if not deleted:
+        raise HTTPException(status_code=404, detail=f"Farm {farm_id} not found")
 
 
 @router.post("/analyze", response_model=IntelligenceResponse, status_code=200)

@@ -14,7 +14,8 @@ venv
 
 # ML
 ml/data
-ml/models
+ml/models/*
+!ml/models/registry/
 .ipynb_checkpoints
 
 # Environment

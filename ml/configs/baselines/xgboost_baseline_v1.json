@@ -1,0 +1,80 @@
+{
+  "ph": {
+    "mean": 6.4,
+    "std": 0.7,
+    "min": 4.5,
+    "max": 8.5
+  },
+  "clay_percent": {
+    "mean": 280.0,
+    "std": 50.0,
+    "min": 150.0,
+    "max": 450.0
+  },
+  "organic_carbon": {
+    "mean": 45.0,
+    "std": 12.0,
+    "min": 10.0,
+    "max": 80.0
+  },
+  "ndvi_mean": {
+    "mean": 0.62,
+    "std": 0.12,
+    "min": 0.15,
+    "max": 0.92
+  },
+  "temp_avg_30d": {
+    "mean": 26.5,
+    "std": 4.2,
+    "min": 15.0,
+    "max": 42.0
+  },
+  "rainfall_last_30d": {
+    "mean": 115.0,
+    "std": 45.0,
+    "min": 10.0,
+    "max": 350.0
+  },
+  "historical_yield": {
+    "mean": 3.8,
+    "std": 1.2,
+    "min": 0.5,
+    "max": 8.0
+  },
+  "soil_quality_index": {
+    "mean": 120.5,
+    "std": 28.0,
+    "min": 50.0,
+    "max": 200.0
+  },
+  "climate_stress_index": {
+    "mean": -9.75,
+    "std": 10.5,
+    "min": -60.0,
+    "max": 15.0
+  },
+  "vegetation_health_score": {
+    "mean": 62.0,
+    "std": 12.0,
+    "min": 15.0,
+    "max": 92.0
+  },
+  "yield_momentum": {
+    "mean": 2.36,
+    "std": 0.95,
+    "min": 0.1,
+    "max": 7.0
+  },
+  "rainfall_efficiency": {
+    "mean": 4.18,
+    "std": 1.8,
+    "min": 0.3,
+    "max": 12.0
+  },
+  "__target__": {
+    "mean": 3.75,
+    "std": 1.05,
+    "min": 0.5,
+    "max": 7.5
+  }
+}

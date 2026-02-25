@@ -15,6 +15,16 @@ class FarmCreate(BaseModel):
     )
 
 
+class FarmUpdate(BaseModel):
+    """Schema for updating a farm (partial update)."""
+
+    name: str | None = Field(None, min_length=2, max_length=100)
+    geojson: dict[str, Any] | None = Field(
+        None,
+        description="GeoJSON Feature with Polygon or MultiPolygon geometry",
+    )
+
+
 class FarmResponse(BaseModel):
     """Structured response after farm creation."""
 
@@ -27,3 +37,10 @@ class FarmResponse(BaseModel):
         description="(minx, miny, maxx, maxy) bounding box in WGS84",
     )
     area_hectares: float = Field(description="Farm area in hectares")
+
+
+class FarmListItem(BaseModel):
+    """Lightweight farm item for list endpoints."""
+
+    id: int
+    name: str
