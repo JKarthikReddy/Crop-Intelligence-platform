@@ -24,6 +24,12 @@ import httpx
 from loguru import logger
 
 from app.core.config import get_settings
+from app.services.cache_service import (
+    NDVI_TTL,
+    get_cache,
+    make_bounds_cache_key,
+    set_cache,
+)
 
 # ── Sentinel Hub endpoints ───────────────────────────────────────
 TOKEN_URL = "https://services.sentinel-hub.com/oauth/token"
@@ -128,6 +134,13 @@ async def fetch_ndvi(
     Raises:
         SatelliteServiceError: On HTTP failure or malformed response.
     """
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = make_bounds_cache_key("ndvi", bounds)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        logger.debug("Cache HIT for {}", cache_key)
+        return cached
+
     token = await get_sentinel_token()
 
     end_date = datetime.now(tz=UTC).date()
@@ -185,12 +198,14 @@ async def fetch_ndvi(
             f"Sentinel Hub process API returned HTTP {response.status_code}"
         )
 
-    return _build_ndvi_response(
+    result = _build_ndvi_response(
         response_content=response.content,
         bounds=bounds,
         time_from=time_from,
         time_to=time_to,
     )
+    await set_cache(cache_key, result, ttl=NDVI_TTL)
+    return result
 
 
 def _build_ndvi_response(

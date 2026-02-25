@@ -17,6 +17,7 @@ from typing import Any
 
 from loguru import logger
 
+from app.services.cache_service import INTELLIGENCE_TTL, get_cache, make_cache_key, set_cache
 from app.services.forecast_service import ForecastServiceError, fetch_forecast
 from app.services.geometry_service import GeometryValidationError, extract_geometry_info
 from app.services.satellite_service import SatelliteServiceError, fetch_ndvi
@@ -60,6 +61,13 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
     lat, lon = geom["centroid"]
     bounds = geom["bounds"]
 
+    # ── Intelligence-level cache check ────────────────────────────
+    cache_key = make_cache_key("intelligence", lat, lon)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        logger.info("Intelligence cache HIT for {}", cache_key)
+        return cached
+
     # ── Parallel data fetch with graceful degradation ────────────
     soil_result, climate_result, forecast_result, satellite_result = await asyncio.gather(
         fetch_soil_data(lat, lon),
@@ -75,7 +83,7 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
     forecast = _sanitize_result(forecast_result, "forecast", ForecastServiceError)
     satellite = _sanitize_result(satellite_result, "satellite", SatelliteServiceError)
 
-    return {
+    payload = {
         "location": {
             "centroid": list(geom["centroid"]),
             "bounds": list(geom["bounds"]),
@@ -86,6 +94,9 @@ async def generate_intelligence(geojson: dict[str, Any]) -> dict[str, Any]:
         "forecast": forecast,
         "satellite": satellite,
     }
+
+    await set_cache(cache_key, payload, ttl=INTELLIGENCE_TTL)
+    return payload
 
 
 def _sanitize_result(

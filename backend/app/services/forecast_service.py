@@ -14,6 +14,7 @@ import httpx
 from loguru import logger
 
 from app.core.config import get_settings
+from app.services.cache_service import FORECAST_TTL, get_cache, make_cache_key, set_cache
 
 OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
@@ -56,6 +57,13 @@ async def fetch_forecast(
     Raises:
         ForecastServiceError: On HTTP failure or malformed response.
     """
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = make_cache_key("forecast", lat, lon)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        logger.debug("Cache HIT for {}", cache_key)
+        return cached
+
     settings = get_settings()
 
     params: dict[str, Any] = {
@@ -84,7 +92,9 @@ async def fetch_forecast(
         )
         raise ForecastServiceError(f"OpenWeather API returned HTTP {response.status_code}")
 
-    return _parse_forecast_response(response.json())
+    result = _parse_forecast_response(response.json())
+    await set_cache(cache_key, result, ttl=FORECAST_TTL)
+    return result
 
 
 def _parse_forecast_response(data: dict[str, Any]) -> dict[str, Any]:

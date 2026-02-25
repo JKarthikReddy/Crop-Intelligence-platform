@@ -13,6 +13,8 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from app.services.cache_service import SOIL_TTL, get_cache, make_cache_key, set_cache
+
 SOILGRIDS_URL = "https://rest.isric.org/soilgrids/v2.0/properties/query"
 
 # Properties requested from SoilGrids
@@ -55,6 +57,13 @@ async def fetch_soil_data(
         SoilServiceError: If the API request fails or the response is
             malformed / missing expected data.
     """
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = make_cache_key("soil", lat, lon)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        logger.debug("Cache HIT for {}", cache_key)
+        return cached
+
     params: dict[str, Any] = {
         "lat": lat,
         "lon": lon,
@@ -82,7 +91,9 @@ async def fetch_soil_data(
         )
         raise SoilServiceError(f"SoilGrids API returned HTTP {response.status_code}")
 
-    return _parse_soil_response(response.json())
+    result = _parse_soil_response(response.json())
+    await set_cache(cache_key, result, ttl=SOIL_TTL)
+    return result
 
 
 def _parse_soil_response(data: dict[str, Any]) -> dict[str, Any]:

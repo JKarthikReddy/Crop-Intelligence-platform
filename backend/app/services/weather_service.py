@@ -14,6 +14,8 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from app.services.cache_service import WEATHER_TTL, get_cache, make_cache_key, set_cache
+
 NASA_POWER_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
 
 # Parameters requested from NASA POWER
@@ -56,6 +58,13 @@ async def fetch_nasa_weather(
     Raises:
         WeatherServiceError: On HTTP failure or malformed response.
     """
+    # ── Cache check ──────────────────────────────────────────────
+    cache_key = make_cache_key("weather", lat, lon)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        logger.debug("Cache HIT for {}", cache_key)
+        return cached
+
     end_date = datetime.now(tz=UTC).date()
     start_date = end_date - timedelta(days=lookback_days)
 
@@ -88,7 +97,9 @@ async def fetch_nasa_weather(
         )
         raise WeatherServiceError(f"NASA POWER API returned HTTP {response.status_code}")
 
-    return _parse_weather_response(response.json())
+    result = _parse_weather_response(response.json())
+    await set_cache(cache_key, result, ttl=WEATHER_TTL)
+    return result
 
 
 def _parse_weather_response(data: dict[str, Any]) -> dict[str, Any]:
