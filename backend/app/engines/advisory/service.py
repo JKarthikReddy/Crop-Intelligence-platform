@@ -276,8 +276,18 @@ async def generate_advisory(
         }
 
     # ── Launch all 6 engines in parallel ─────────────────────────
+    # Soil engine is synchronous — wrap in a coroutine for gather()
+    async def _soil_coro() -> dict[str, Any]:
+        return analyze_soil(
+            nitrogen=50.0,
+            phosphorus=35.0,
+            potassium=45.0,
+            ph=6.5,
+            soil_type="Loamy",
+        )
+
     results = await asyncio.gather(
-        _run_engine("Soil", analyze_soil(lat=lat, lon=lon)),
+        _run_engine("Soil", _soil_coro()),
         _run_engine("Weather", analyze_weather(lat=lat, lon=lon)),
         _run_engine(
             "Crop",

@@ -1,4 +1,4 @@
-"""Soil Engine router — REST endpoints for soil intelligence."""
+"""Soil Engine router — REST endpoints for soil diagnostics."""
 
 from fastapi import APIRouter, HTTPException
 
@@ -10,13 +10,19 @@ router = APIRouter(prefix="/soil", tags=["Soil Engine"])
 
 @router.post("/analyze", response_model=SoilAnalysisResponse)
 async def soil_analysis(payload: SoilAnalysisRequest) -> SoilAnalysisResponse:
-    """Analyze soil at a geographic coordinate.
+    """Diagnose soil health from farmer-provided soil test data.
 
-    Returns pH classification, texture, nutrient profile,
-    soil health index (0-100), and actionable recommendations.
+    Accepts NPK values, pH, and soil type; returns health score,
+    deficiencies, nutrient profiles, and amendment recommendations.
     """
     try:
-        result = await analyze_soil(payload.lat, payload.lon)
+        result = analyze_soil(
+            nitrogen=payload.nitrogen,
+            phosphorus=payload.phosphorus,
+            potassium=payload.potassium,
+            ph=payload.ph,
+            soil_type=payload.soil_type.value,
+        )
         return SoilAnalysisResponse(**result)
     except SoilEngineError as exc:
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
