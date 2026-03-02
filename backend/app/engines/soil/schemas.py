@@ -7,10 +7,11 @@ soil health score with actionable amendment recommendations.
 
 from __future__ import annotations
 
+import math
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel, Field, field_validator
+from pydantic import BaseModel, Field, field_validator, model_validator
 
 # ── Enumerations ─────────────────────────────────────────────────
 
@@ -101,6 +102,18 @@ class SoilAnalysisRequest(BaseModel):
         description="Soil category classification",
         json_schema_extra={"example": "Black"},
     )
+
+    @model_validator(mode="before")
+    @classmethod
+    def _reject_nan_inf(cls, data: Any) -> Any:
+        """Reject NaN / Infinity before field validators run."""
+        if isinstance(data, dict):
+            for field in ("nitrogen", "phosphorus", "potassium", "ph"):
+                v = data.get(field)
+                if isinstance(v, float) and (math.isnan(v) or math.isinf(v)):
+                    msg = f"{field} must be a finite number"
+                    raise ValueError(msg)
+        return data
 
     @field_validator("ph")
     @classmethod

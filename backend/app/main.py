@@ -17,13 +17,15 @@ Farmer App → API Gateway →
   Farmer Dashboard (frontend)
 """
 
+import math
 from collections.abc import AsyncGenerator
 from contextlib import asynccontextmanager
 from pathlib import Path
 
 from fastapi import FastAPI
+from fastapi.exceptions import RequestValidationError
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
@@ -100,6 +102,23 @@ def create_app() -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
+
+    # ── Global Exception Handlers ────────────────────────────────
+    @app.exception_handler(RequestValidationError)
+    async def _validation_error_handler(
+        _request: object,
+        exc: RequestValidationError,
+    ) -> JSONResponse:
+        """Sanitise NaN/Inf in validation-error payloads so json.dumps won't crash."""
+        clean_errors: list[dict] = []
+        for err in exc.errors():
+            sanitised = dict(err)
+            inp = sanitised.get("input")
+            if isinstance(inp, float) and (math.isnan(inp) or math.isinf(inp)):
+                sanitised["input"] = None
+                sanitised["msg"] = sanitised.get("msg", "") + " (received non-finite value)"
+            clean_errors.append(sanitised)
+        return JSONResponse(status_code=422, content={"detail": clean_errors})
 
     # ── Infrastructure Routers ───────────────────────────────────
     app.include_router(health_router)

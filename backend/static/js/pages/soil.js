@@ -75,8 +75,19 @@ registerPage("soil", {
       const ph = parseFloat($("#soil-ph").value);
       const st = $("#soil-type").value;
 
+      /* ── Input Validation ── */
+      const errors = [];
+      if (isNaN(n)  || n < 0  || n > 500) errors.push("Nitrogen must be 0-500 kg/ha");
+      if (isNaN(p)  || p < 0  || p > 200) errors.push("Phosphorus must be 0-200 kg/ha");
+      if (isNaN(k)  || k < 0  || k > 500) errors.push("Potassium must be 0-500 kg/ha");
+      if (isNaN(ph) || ph < 0 || ph > 14) errors.push("pH must be 0-14");
+      if (errors.length) {
+        showError(results, errors.join(". ") + ".");
+        return;
+      }
+
       btn.classList.add("loading");
-      btn.innerHTML = '<span class="spinner"></span> Analyzing…';
+      btn.innerHTML = '<span class="spinner"></span> Analyzing\u2026';
       showLoading(results);
 
       try {
