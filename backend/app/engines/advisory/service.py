@@ -299,17 +299,16 @@ async def generate_advisory(
             season=None,
         )
 
+    async def _fert_coro(crop: str) -> dict[str, Any]:
+        return recommend_fertilizer(selected_crop=crop)
+
     results = await asyncio.gather(
         _run_engine("Soil", _soil_coro()),
         _run_engine("Weather", analyze_weather(lat=lat, lon=lon)),
         _run_engine("Crop", _crop_coro()),
         _run_engine(
             "Fertilizer",
-            recommend_fertilizer(
-                crop_type=crop_type,
-                target_yield=target_yield,
-                area_hectares=area_hectares,
-            ),
+            _fert_coro(crop_type),
         ),
         _run_engine("Disease", assess_disease_risk(crop_type=crop_type)),
         _run_engine(
@@ -354,13 +353,17 @@ async def generate_advisory(
     # If soil data available, re-run fertilizer with actual soil values
     if soil_data and fertilizer_data:
         try:
-            fertilizer_data = await recommend_fertilizer(
-                crop_type=crop_type,
-                target_yield=target_yield,
-                soil_ph=soil_data.get("ph"),
-                organic_carbon=soil_data.get("organic_carbon"),
-                clay_percent=soil_data.get("clay_percent"),
-                area_hectares=area_hectares,
+            # Use crop from crop engine if available, else fall back
+            best_crop = crop_type
+            if crop_data:
+                best_crop = crop_data.get("recommended_crop", crop_type)
+            fertilizer_data = recommend_fertilizer(
+                deficiencies=soil_data.get("deficiencies", []),
+                soil_health=soil_data.get("soil_health", "Medium"),
+                ph_status=soil_data.get("ph_status", "Neutral"),
+                selected_crop=best_crop,
+                land_area=area_hectares,
+                unit="hectare",
             )
             engine_map["Fertilizer"] = fertilizer_data
         except Exception:

@@ -1,309 +1,621 @@
-"""Fertilizer Engine service — NPK calculation, product selection, and scheduling.
+"""Fertilizer Optimization Engine — deficiency-driven recommendation service.
 
-Pure service layer:
-- Crop-specific NPK requirement tables
-- Soil-adjusted fertilizer dosage calculation
-- Product mapping (Urea, DAP, MOP, etc.)
-- Application schedule by growth stage
-- Cost estimation
+Pure service layer (no I/O):
+1. Crop nutrient requirement lookup (30 Indian crops)
+2. Match soil deficiencies with crop nutrient needs → severity
+3. Map deficiency + severity → fertilizer products + quantities
+4. Build application schedule & advisory notes
 """
+
+from __future__ import annotations
 
 from typing import Any
 
-# ── Crop NPK Requirements (kg/ha per ton of yield) ──────────────
-_CROP_NPK: dict[str, dict[str, float]] = {
-    "rice": {"N": 22, "P2O5": 10, "K2O": 24},
-    "wheat": {"N": 25, "P2O5": 12, "K2O": 20},
-    "maize": {"N": 28, "P2O5": 14, "K2O": 22},
-    "soybean": {"N": 8, "P2O5": 16, "K2O": 20},  # Soybean fixes N
-}
-
-# ── Soil Adjustment Factors ──────────────────────────────────────
-# pH-based nutrient efficiency multipliers
-_PH_N_EFFICIENCY: dict[str, float] = {
-    "acidic": 0.85,
-    "neutral": 1.0,
-    "alkaline": 0.90,
-}
-
-# ── Fertilizer Products Database ─────────────────────────────────
-_PRODUCTS: dict[str, dict[str, Any]] = {
-    "Urea": {"npk": "46-0-0", "N": 0.46, "P": 0.0, "K": 0.0, "price_per_kg": 0.35},
-    "DAP": {"npk": "18-46-0", "N": 0.18, "P": 0.46, "K": 0.0, "price_per_kg": 0.55},
-    "MOP": {"npk": "0-0-60", "N": 0.0, "P": 0.0, "K": 0.60, "price_per_kg": 0.40},
-    "NPK 10-26-26": {"npk": "10-26-26", "N": 0.10, "P": 0.26, "K": 0.26, "price_per_kg": 0.48},
-    "Ammonium Sulfate": {"npk": "21-0-0", "N": 0.21, "P": 0.0, "K": 0.0, "price_per_kg": 0.28},
-    "SSP": {"npk": "0-16-0", "N": 0.0, "P": 0.16, "K": 0.0, "price_per_kg": 0.22},
-}
+# ── Exception ────────────────────────────────────────────────────
 
 
 class FertilizerEngineError(Exception):
-    """Raised when fertilizer calculation fails."""
+    """Raised when fertilizer recommendation fails."""
 
 
-def _ph_category(ph: float | None) -> str:
-    """Classify pH into broad category for adjustment."""
-    if ph is None:
-        return "neutral"
-    if ph < 6.0:
-        return "acidic"
-    if ph > 7.5:
-        return "alkaline"
-    return "neutral"
+# ── Hectare / Acre Conversion ────────────────────────────────────
+
+_HA_PER_ACRE = 0.404686
+_ACRES_PER_HA = 2.47105
 
 
-def calculate_npk(
-    crop_type: str,
-    target_yield: float,
-    soil_ph: float | None,
-    organic_carbon: int | None,
-    area_hectares: float,
-) -> dict[str, Any]:
-    """Calculate NPK requirements adjusted for soil conditions."""
-    crop_req = _CROP_NPK.get(crop_type, _CROP_NPK["rice"])
+# ── Crop Nutrient Requirement Table ──────────────────────────────
+# Need level: "High" / "Medium" / "Low" for each of N, P, K.
+# Aligned with CROP_DB names in the Crop Engine.
 
-    # Base NPK from crop requirement x target yield
-    base_n = crop_req["N"] * target_yield
-    base_p = crop_req["P2O5"] * target_yield
-    base_k = crop_req["K2O"] * target_yield
+_CROP_NUTRIENTS: dict[str, dict[str, str]] = {
+    "Rice": {"N": "High", "P": "Medium", "K": "Medium"},
+    "Wheat": {"N": "High", "P": "Medium", "K": "Medium"},
+    "Maize": {"N": "High", "P": "Medium", "K": "Medium"},
+    "Red Chilli": {"N": "High", "P": "Medium", "K": "High"},
+    "Cotton": {"N": "High", "P": "Medium", "K": "High"},
+    "Groundnut": {"N": "Low", "P": "Medium", "K": "Medium"},
+    "Soybean": {"N": "Low", "P": "Medium", "K": "Medium"},
+    "Sugarcane": {"N": "High", "P": "Medium", "K": "High"},
+    "Tobacco": {"N": "Medium", "P": "Medium", "K": "Medium"},
+    "Turmeric": {"N": "High", "P": "Medium", "K": "High"},
+    "Sunflower": {"N": "Medium", "P": "Medium", "K": "Medium"},
+    "Sorghum": {"N": "Medium", "P": "Low", "K": "Low"},
+    "Bajra": {"N": "Medium", "P": "Low", "K": "Low"},
+    "Pulses (Moong)": {"N": "Low", "P": "Medium", "K": "Low"},
+    "Pulses (Urad)": {"N": "Low", "P": "Medium", "K": "Low"},
+    "Chickpea": {"N": "Low", "P": "Medium", "K": "Medium"},
+    "Lentil": {"N": "Low", "P": "Medium", "K": "Low"},
+    "Mustard": {"N": "Medium", "P": "Medium", "K": "Low"},
+    "Potato": {"N": "High", "P": "High", "K": "High"},
+    "Onion": {"N": "High", "P": "Medium", "K": "High"},
+    "Tomato": {"N": "High", "P": "High", "K": "High"},
+    "Banana": {"N": "High", "P": "Medium", "K": "High"},
+    "Coconut": {"N": "Medium", "P": "Low", "K": "High"},
+    "Mango": {"N": "Medium", "P": "Medium", "K": "Medium"},
+    "Tea": {"N": "High", "P": "Low", "K": "Medium"},
+    "Coffee": {"N": "Medium", "P": "Low", "K": "Medium"},
+    "Jute": {"N": "Medium", "P": "Low", "K": "Low"},
+    "Sesame": {"N": "Low", "P": "Low", "K": "Low"},
+    "Castor": {"N": "Low", "P": "Low", "K": "Low"},
+}
 
-    # pH adjustment for N efficiency
-    ph_cat = _ph_category(soil_ph)
-    n_efficiency = _PH_N_EFFICIENCY.get(ph_cat, 1.0)
-    adjusted_n = base_n / n_efficiency
-
-    # Organic carbon adjustment (high OC reduces N need)
-    oc = organic_carbon or 30
-    if oc > 50:
-        adjusted_n *= 0.85  # OC supplies some N
-    elif oc < 20:
-        adjusted_n *= 1.10  # Low OC = need more N
-
-    # Round all values
-    n_per_ha = round(adjusted_n, 1)
-    p_per_ha = round(base_p, 1)
-    k_per_ha = round(base_k, 1)
-
-    return {
-        "nitrogen_kg_per_ha": n_per_ha,
-        "phosphorus_kg_per_ha": p_per_ha,
-        "potassium_kg_per_ha": k_per_ha,
-        "total_nitrogen_kg": round(n_per_ha * area_hectares, 1),
-        "total_phosphorus_kg": round(p_per_ha * area_hectares, 1),
-        "total_potassium_kg": round(k_per_ha * area_hectares, 1),
-    }
+# Fallback for crops not in the table
+_DEFAULT_CROP_NEED: dict[str, str] = {"N": "Medium", "P": "Medium", "K": "Medium"}
 
 
-def select_products(npk: dict[str, Any], area_hectares: float) -> list[dict[str, Any]]:
-    """Select optimal fertilizer products to meet NPK targets."""
-    products: list[dict[str, Any]] = []
+# ── Deficiency → Nutrient Key Mapping ────────────────────────────
+# Maps soil deficiency labels (from Soil Engine) to canonical nutrient keys.
 
-    n_need = npk["nitrogen_kg_per_ha"]
-    p_need = npk["phosphorus_kg_per_ha"]
-    k_need = npk["potassium_kg_per_ha"]
+_DEFICIENCY_NUTRIENT: dict[str, str] = {
+    "nitrogen": "N",
+    "phosphorus": "P",
+    "potassium": "K",
+}
 
-    # DAP first (provides P + some N)
-    if p_need > 0:
-        dap_info = _PRODUCTS["DAP"]
-        dap_qty = round(p_need / dap_info["P"], 1)
-        n_from_dap = dap_qty * dap_info["N"]
-        products.append(
-            {
-                "name": "DAP",
-                "composition": dap_info["npk"],
-                "quantity_kg_per_ha": dap_qty,
-                "total_quantity_kg": round(dap_qty * area_hectares, 1),
-                "estimated_cost_usd": round(dap_qty * area_hectares * dap_info["price_per_kg"], 2),
-            }
-        )
-        n_need = max(0, n_need - n_from_dap)
 
-    # Urea for remaining N
-    if n_need > 0:
-        urea_info = _PRODUCTS["Urea"]
-        urea_qty = round(n_need / urea_info["N"], 1)
-        products.append(
-            {
-                "name": "Urea",
-                "composition": urea_info["npk"],
-                "quantity_kg_per_ha": urea_qty,
-                "total_quantity_kg": round(urea_qty * area_hectares, 1),
-                "estimated_cost_usd": round(
-                    urea_qty * area_hectares * urea_info["price_per_kg"], 2
-                ),
-            }
-        )
+# ── Fertilizer Product Mapping ───────────────────────────────────
+# Maps nutrient key → primary product(s).
 
-    # MOP for K
-    if k_need > 0:
-        mop_info = _PRODUCTS["MOP"]
-        mop_qty = round(k_need / mop_info["K"], 1)
-        products.append(
-            {
-                "name": "MOP",
-                "composition": mop_info["npk"],
-                "quantity_kg_per_ha": mop_qty,
-                "total_quantity_kg": round(mop_qty * area_hectares, 1),
-                "estimated_cost_usd": round(mop_qty * area_hectares * mop_info["price_per_kg"], 2),
-            }
-        )
+_NUTRIENT_PRODUCTS: dict[str, list[str]] = {
+    "N": ["Urea"],
+    "P": ["DAP", "SSP"],
+    "K": ["MOP"],
+}
+
+# When multiple nutrient deficiencies exist, add a blended mix
+_BLEND_PRODUCT = "NPK 10-26-26"
+
+
+# ── Severity-Based Quantity (kg per acre) ────────────────────────
+# The combination of deficiency presence + crop requirement level
+# determines a severity and base dosage.
+
+_SEVERITY_QUANTITY: dict[str, float] = {
+    "High": 60.0,
+    "Medium": 50.0,
+    "Low": 30.0,
+}
+
+
+# ── Application Schedule Templates ──────────────────────────────
+
+_SCHEDULES: dict[str, list[dict[str, Any]]] = {
+    "Rice": [
+        {
+            "stage": "Basal (at transplanting)",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply 50% P and 50% K as basal; incorporate before transplanting",
+        },
+        {
+            "stage": "Tillering",
+            "timing": "21-25 days after transplanting",
+            "products": ["Urea"],
+            "notes": "Apply 50% Urea; broadcast in standing water",
+        },
+        {
+            "stage": "Panicle initiation",
+            "timing": "45-50 days after transplanting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 50% MOP; keep field moist",
+        },
+    ],
+    "Wheat": [
+        {
+            "stage": "Sowing",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and K with seed drill at sowing",
+        },
+        {
+            "stage": "First irrigation (CRI)",
+            "timing": "21 days after sowing",
+            "products": ["Urea"],
+            "notes": "Apply 50% N just before first irrigation",
+        },
+        {
+            "stage": "Heading",
+            "timing": "65-70 days after sowing",
+            "products": ["Urea"],
+            "notes": "Apply remaining 50% N; foliar spray if needed",
+        },
+    ],
+    "Maize": [
+        {
+            "stage": "Sowing",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Band-place DAP and MOP 5 cm from seed row",
+        },
+        {
+            "stage": "Knee-high (V6)",
+            "timing": "30-35 days after sowing",
+            "products": ["Urea"],
+            "notes": "Side-dress 60% Urea along rows",
+        },
+        {
+            "stage": "Tasseling",
+            "timing": "55-60 days after sowing",
+            "products": ["Urea"],
+            "notes": "Apply remaining Urea; fertigate if possible",
+        },
+    ],
+    "Red Chilli": [
+        {
+            "stage": "Transplanting",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and 50% K as basal before transplanting",
+        },
+        {
+            "stage": "Vegetative growth",
+            "timing": "30 days after transplanting",
+            "products": ["Urea"],
+            "notes": "Apply 50% Urea as side-dress along rows",
+        },
+        {
+            "stage": "Flowering & fruiting",
+            "timing": "60 days after transplanting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 50% MOP; fertigate if possible",
+        },
+    ],
+    "Cotton": [
+        {
+            "stage": "Sowing",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and 50% K as basal at sowing",
+        },
+        {
+            "stage": "Square formation",
+            "timing": "35-40 days after sowing",
+            "products": ["Urea"],
+            "notes": "Apply 50% Urea as side-dress",
+        },
+        {
+            "stage": "Boll development",
+            "timing": "70-80 days after sowing",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 50% MOP",
+        },
+    ],
+    "Sugarcane": [
+        {
+            "stage": "Planting",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and 33% K in furrows at planting",
+        },
+        {
+            "stage": "Tillering",
+            "timing": "45-60 days after planting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply 50% Urea and 33% MOP; earth up after application",
+        },
+        {
+            "stage": "Grand growth",
+            "timing": "90-120 days after planting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 34% MOP",
+        },
+    ],
+    "Potato": [
+        {
+            "stage": "Planting",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and 50% K in rows before planting tubers",
+        },
+        {
+            "stage": "Stolon initiation",
+            "timing": "25-30 days after planting",
+            "products": ["Urea"],
+            "notes": "Apply 50% Urea and earth up",
+        },
+        {
+            "stage": "Tuber bulking",
+            "timing": "45-50 days after planting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 50% MOP; ensure irrigation",
+        },
+    ],
+    "Tomato": [
+        {
+            "stage": "Transplanting",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and 50% K as basal",
+        },
+        {
+            "stage": "Vegetative growth",
+            "timing": "21-25 days after transplanting",
+            "products": ["Urea"],
+            "notes": "Apply 50% Urea; side-dress along rows",
+        },
+        {
+            "stage": "Fruiting",
+            "timing": "45-50 days after transplanting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 50% MOP through drip or side-dress",
+        },
+    ],
+    "Banana": [
+        {
+            "stage": "Planting",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and 25% K in pit at planting",
+        },
+        {
+            "stage": "Vegetative (3 months)",
+            "timing": "90 days after planting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply 33% Urea and 25% MOP as ring application",
+        },
+        {
+            "stage": "Shooting (5 months)",
+            "timing": "150 days after planting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply 33% Urea and 25% MOP",
+        },
+        {
+            "stage": "Bunch development",
+            "timing": "210 days after planting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 25% MOP",
+        },
+    ],
+    "Soybean": [
+        {
+            "stage": "Sowing",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and K as basal. Inoculate seed with Rhizobium",
+        },
+        {
+            "stage": "Flowering (R1)",
+            "timing": "35-40 days after sowing",
+            "products": ["Urea"],
+            "notes": "Light N top-dress only if plants show N deficiency",
+        },
+    ],
+    "Onion": [
+        {
+            "stage": "Transplanting",
+            "timing": "Day 0",
+            "products": ["DAP", "MOP"],
+            "notes": "Apply full P and 50% K as basal before transplanting",
+        },
+        {
+            "stage": "Vegetative growth",
+            "timing": "30 days after transplanting",
+            "products": ["Urea"],
+            "notes": "Apply 50% Urea; top-dress along rows",
+        },
+        {
+            "stage": "Bulb formation",
+            "timing": "50-55 days after transplanting",
+            "products": ["Urea", "MOP"],
+            "notes": "Apply remaining Urea and 50% MOP",
+        },
+    ],
+}
+
+# Default 3-stage schedule for crops without a specific template
+_DEFAULT_SCHEDULE: list[dict[str, Any]] = [
+    {
+        "stage": "Basal (at sowing/planting)",
+        "timing": "Day 0",
+        "products": ["DAP", "MOP"],
+        "notes": "Apply full P and 50% K as basal dose before sowing",
+    },
+    {
+        "stage": "Top-dress 1",
+        "timing": "30 days after sowing",
+        "products": ["Urea"],
+        "notes": "Apply 50% Urea as side-dress or top-dress",
+    },
+    {
+        "stage": "Top-dress 2",
+        "timing": "55-60 days after sowing",
+        "products": ["Urea", "MOP"],
+        "notes": "Apply remaining Urea and 50% MOP",
+    },
+]
+
+
+# =====================================================================
+#  INTERNAL HELPERS
+# =====================================================================
+
+
+def _resolve_crop_needs(crop: str) -> dict[str, str]:
+    """Look up N/P/K need levels for a crop (title-cased)."""
+    return _CROP_NUTRIENTS.get(crop, _DEFAULT_CROP_NEED)
+
+
+def _parse_deficiency(label: str) -> str | None:
+    """Extract canonical nutrient key from a deficiency label.
+
+    Handles labels like "Nitrogen", "Phosphorus", "Potassium",
+    "pH (too acidic)", "pH (too alkaline)", etc.
+    Returns 'N', 'P', 'K', or *None* for non-nutrient deficiencies.
+    """
+    low = label.strip().lower()
+    for keyword, key in _DEFICIENCY_NUTRIENT.items():
+        if keyword in low:
+            return key
+    return None
+
+
+def _determine_severity(
+    deficiencies: list[str],
+    crop_needs: dict[str, str],
+) -> dict[str, str]:
+    """Cross-reference soil deficiencies with crop requirements.
+
+    Returns ``{nutrient_key: severity_level}`` where severity is
+    "High" (crop needs High + soil deficient),
+    "Medium" (crop needs Medium + soil deficient), or
+    "Low" (crop needs Low + soil deficient).
+    """
+    severity: dict[str, str] = {}
+    for label in deficiencies:
+        nutrient = _parse_deficiency(label)
+        if nutrient is None:
+            continue  # pH or unknown — handled in notes
+        need = crop_needs.get(nutrient, "Medium")
+        severity[nutrient] = need  # severity = crop need level
+    return severity
+
+
+def _select_fertilizers(severity: dict[str, str]) -> list[str]:
+    """Map nutrient deficiencies → fertilizer product names."""
+    products: list[str] = []
+    seen: set[str] = set()
+
+    for nutrient in severity:
+        for product in _NUTRIENT_PRODUCTS.get(nutrient, []):
+            if product not in seen:
+                products.append(product)
+                seen.add(product)
+
+    # If multiple nutrient deficiencies, add blended NPK mix
+    if len(severity) >= 2 and _BLEND_PRODUCT not in seen:
+        products.append(_BLEND_PRODUCT)
 
     return products
 
 
-def build_schedule(crop_type: str) -> list[dict[str, Any]]:
-    """Generate application schedule by crop growth stage."""
-    schedules: dict[str, list[dict[str, Any]]] = {
-        "rice": [
-            {
-                "stage": "Basal (at transplanting)",
-                "timing": "Day 0",
-                "products": ["DAP", "MOP"],
-                "notes": "Apply 50% P and 50% K as basal; incorporate into soil before transplanting",
-            },
-            {
-                "stage": "Tillering",
-                "timing": "21-25 days after transplanting",
-                "products": ["Urea"],
-                "notes": "Apply 50% of Urea dose; broadcast in standing water",
-            },
-            {
-                "stage": "Panicle initiation",
-                "timing": "45-50 days after transplanting",
-                "products": ["Urea", "MOP"],
-                "notes": "Apply remaining Urea and 50% MOP; ensure field is moist",
-            },
-        ],
-        "wheat": [
-            {
-                "stage": "Sowing",
-                "timing": "Day 0",
-                "products": ["DAP", "MOP"],
-                "notes": "Apply full P and K dose with seed drill at sowing",
-            },
-            {
-                "stage": "First irrigation (CRI)",
-                "timing": "21 days after sowing",
-                "products": ["Urea"],
-                "notes": "Apply 50% N just before first irrigation",
-            },
-            {
-                "stage": "Heading",
-                "timing": "65-70 days after sowing",
-                "products": ["Urea"],
-                "notes": "Apply remaining 50% N; foliar spray if needed",
-            },
-        ],
-        "maize": [
-            {
-                "stage": "Sowing",
-                "timing": "Day 0",
-                "products": ["DAP", "MOP"],
-                "notes": "Band-place DAP and MOP 5cm from seed row",
-            },
-            {
-                "stage": "Knee-high (V6)",
-                "timing": "30-35 days after sowing",
-                "products": ["Urea"],
-                "notes": "Side-dress 60% of Urea dose along rows",
-            },
-            {
-                "stage": "Tasseling",
-                "timing": "55-60 days after sowing",
-                "products": ["Urea"],
-                "notes": "Apply remaining Urea; fertigate if possible",
-            },
-        ],
-        "soybean": [
-            {
-                "stage": "Sowing",
-                "timing": "Day 0",
-                "products": ["DAP", "MOP"],
-                "notes": "Apply full P and K as basal. Inoculate seed with Rhizobium for N fixation",
-            },
-            {
-                "stage": "Flowering (R1)",
-                "timing": "35-40 days after sowing",
-                "products": ["Urea"],
-                "notes": "Light N top-dress only if plants show N deficiency",
-            },
-        ],
-    }
-    return schedules.get(crop_type, schedules["rice"])
+def _calculate_quantities(
+    severity: dict[str, str],
+    fertilizers: list[str],
+    land_area_acres: float,
+) -> tuple[dict[str, str], dict[str, str]]:
+    """Calculate per-acre and total quantities for each fertilizer.
+
+    Uses severity-based dosage: High → 60 kg/acre, Medium → 50 kg/acre,
+    Low → 30 kg/acre.
+    """
+    # Compute average severity for blended products
+    if severity:
+        avg_qty = round(
+            sum(_SEVERITY_QUANTITY[s] for s in severity.values()) / len(severity),
+            1,
+        )
+    else:
+        avg_qty = _SEVERITY_QUANTITY["Medium"]
+
+    per_acre: dict[str, str] = {}
+    total: dict[str, str] = {}
+
+    for product in fertilizers:
+        # Determine which nutrient this product primarily serves
+        qty_per_acre: float | None = None
+        for nutrient, prods in _NUTRIENT_PRODUCTS.items():
+            if product in prods and nutrient in severity:
+                qty_per_acre = _SEVERITY_QUANTITY[severity[nutrient]]
+                break
+
+        # Blended product or unmatched → use average
+        if qty_per_acre is None:
+            qty_per_acre = avg_qty
+
+        total_qty = round(qty_per_acre * land_area_acres, 1)
+        per_acre[product] = f"{qty_per_acre} kg"
+        total[product] = f"{total_qty} kg"
+
+    return per_acre, total
 
 
-def generate_fertilizer_recommendations(
-    crop_type: str,
-    soil_ph: float | None,
-    organic_carbon: int | None,
-) -> list[str]:
-    """Generate fertilizer management tips."""
-    recs: list[str] = []
+def _build_schedule(crop: str, fertilizers: list[str]) -> list[dict[str, Any]]:
+    """Select the application schedule template for the crop.
 
-    if soil_ph is not None:
-        if soil_ph < 5.5:
-            recs.append("Apply lime 2-3 weeks before fertilizer to improve nutrient availability")
-        elif soil_ph > 8.0:
-            recs.append(
-                "Use ammonium-based fertilizers (e.g., Ammonium Sulfate) instead of Urea in alkaline soils"
+    Filters schedule steps to only include products that were recommended.
+    """
+    template = _SCHEDULES.get(crop, _DEFAULT_SCHEDULE)
+
+    # Filter each step's products to those actually recommended
+    fert_set = set(fertilizers)
+    schedule: list[dict[str, Any]] = []
+    for step in template:
+        relevant = [p for p in step["products"] if p in fert_set]
+        if not relevant:
+            # If none of the step's products are needed, keep step but
+            # note "No application required at this stage"
+            schedule.append(
+                {
+                    "stage": step["stage"],
+                    "timing": step["timing"],
+                    "products": [],
+                    "notes": "No application required at this stage",
+                }
             )
+        else:
+            schedule.append(
+                {
+                    "stage": step["stage"],
+                    "timing": step["timing"],
+                    "products": relevant,
+                    "notes": step["notes"],
+                }
+            )
+    return schedule
 
-    oc = organic_carbon or 30
-    if oc < 20:
-        recs.append("Low organic matter — supplement with organic manure (FYM: 5-10 t/ha)")
 
-    recs.append(
-        f"Split nitrogen application reduces losses and increases {crop_type} uptake efficiency"
-    )
-    recs.append("Avoid fertilizer application before heavy rain to prevent leaching")
+def _generate_notes(
+    deficiencies: list[str],
+    soil_health: str,
+    ph_status: str,
+    crop: str,
+    severity: dict[str, str],
+) -> list[str]:
+    """Generate advisory notes based on soil conditions and crop."""
+    notes: list[str] = []
 
-    if crop_type == "soybean":
-        recs.append(
-            "Use Rhizobium inoculant for seed treatment — reduces N fertilizer need by 60-80%"
+    # pH-based tips
+    ph_low = ph_status.lower()
+    if "acidic" in ph_low:
+        notes.append(
+            "Apply agricultural lime (2-3 t/ha) 2-3 weeks before fertilizer "
+            "to raise pH and improve nutrient availability"
+        )
+    elif "alkaline" in ph_low:
+        notes.append(
+            "Use ammonium-based fertilizers (e.g., Ammonium Sulfate) instead "
+            "of Urea; consider gypsum application to lower pH"
         )
 
-    return recs
+    # Soil health tips
+    health_low = soil_health.lower()
+    if health_low in ("poor", "low"):
+        notes.append(
+            "Soil health is low — supplement with organic manure (FYM: 5-10 t/ha) "
+            "and consider green manuring to improve soil structure"
+        )
+    elif health_low == "medium":
+        notes.append(
+            "Maintain soil health with crop rotation and periodic organic " "matter additions"
+        )
+
+    # Severity-specific tips
+    for nutrient, sev in severity.items():
+        label = {"N": "Nitrogen", "P": "Phosphorus", "K": "Potassium"}.get(nutrient, nutrient)
+        if sev == "High":
+            notes.append(
+                f"Strong {label} supplementation required — split application "
+                f"across growth stages for maximum uptake"
+            )
+
+    # General best practices
+    notes.append(
+        f"Split nitrogen application reduces losses and increases " f"{crop} uptake efficiency"
+    )
+    notes.append("Avoid fertilizer application before heavy rain to prevent leaching")
+
+    # Crop-specific
+    if crop in ("Soybean", "Groundnut", "Chickpea", "Lentil", "Pulses (Moong)", "Pulses (Urad)"):
+        notes.append(
+            "Legume crop — use Rhizobium inoculant for seed treatment to "
+            "reduce N fertilizer requirement by 60-80%"
+        )
+
+    # No deficiencies
+    if not deficiencies:
+        notes.insert(
+            0,
+            "No nutrient deficiencies detected — apply a maintenance dose "
+            "of NPK based on crop requirement",
+        )
+
+    return notes
 
 
-# ── Main Entry Point ─────────────────────────────────────────────
+# =====================================================================
+#  MAIN ENTRY POINT
+# =====================================================================
 
 
-async def recommend_fertilizer(
-    crop_type: str = "rice",
-    target_yield: float = 5.0,
-    soil_ph: float | None = None,
-    organic_carbon: int | None = None,
-    clay_percent: int | None = None,
-    area_hectares: float = 1.0,
+def recommend_fertilizer(
+    deficiencies: list[str] | None = None,
+    soil_health: str = "Medium",
+    ph_status: str = "Neutral",
+    selected_crop: str = "Rice",
+    land_area: float = 1.0,
+    unit: str = "acre",
 ) -> dict[str, Any]:
-    """Full fertilizer recommendation — NPK, products, schedule, and cost.
+    """Deficiency-driven fertilizer recommendation.
+
+    Synchronous — no I/O required.
 
     Args:
-        crop_type: Target crop.
-        target_yield: Desired yield (t/ha).
-        soil_ph: Soil pH (from Soil Engine).
-        organic_carbon: SOC in g/dm³ (from Soil Engine).
-        clay_percent: Clay in g/kg (from Soil Engine).
-        area_hectares: Farm area for total quantity calculation.
+        deficiencies: Nutrient deficiency labels from Soil Engine
+            (e.g. ``["Nitrogen", "Potassium"]``).
+        soil_health: Overall soil health label (Poor/Low/Medium/Good/Excellent).
+        ph_status: pH classification from Soil Engine.
+        selected_crop: Crop name (title-cased).
+        land_area: Farm area value.
+        unit: ``"acre"`` or ``"hectare"``.
 
     Returns:
-        Complete fertilizer recommendation dict.
+        Dict matching ``FertilizerResponse`` schema.
     """
-    npk = calculate_npk(crop_type, target_yield, soil_ph, organic_carbon, area_hectares)
-    products = select_products(npk, area_hectares)
-    schedule = build_schedule(crop_type)
-    recs = generate_fertilizer_recommendations(crop_type, soil_ph, organic_carbon)
+    deficiencies = deficiencies or []
+    crop = selected_crop.strip().title()
 
-    total_cost = sum(p["estimated_cost_usd"] for p in products)
+    # Convert land_area to acres for internal calculation
+    land_area_acres = land_area * _ACRES_PER_HA if unit.lower() == "hectare" else land_area
+
+    # 1. Crop nutrient requirement lookup
+    crop_needs = _resolve_crop_needs(crop)
+
+    # 2. Match deficiencies with crop requirements → severity
+    severity = _determine_severity(deficiencies, crop_needs)
+
+    # 3. Map deficiency + severity → fertilizer products
+    fertilizers = _select_fertilizers(severity)
+
+    # If no deficiencies but crop has needs, recommend maintenance NPK
+    if not fertilizers:
+        fertilizers = [_BLEND_PRODUCT]
+
+    # 4. Quantity calculation
+    per_acre, total = _calculate_quantities(severity, fertilizers, land_area_acres)
+
+    # 5. Application schedule
+    schedule = _build_schedule(crop, fertilizers)
+
+    # 6. Advisory notes
+    notes = _generate_notes(deficiencies, soil_health, ph_status, crop, severity)
 
     return {
-        "npk_recommendation": npk,
-        "products": products,
+        "fertilizers": fertilizers,
+        "quantity_per_acre": per_acre,
+        "total_required": total,
+        "schedule": schedule,
+        "notes": notes,
+        # Backward compat for advisory engine
         "application_schedule": schedule,
-        "cost_summary": {
-            "total_fertilizer_cost_usd": round(total_cost, 2),
-            "cost_per_hectare_usd": round(total_cost / max(area_hectares, 0.01), 2),
-            "area_hectares": area_hectares,
-        },
-        "recommendations": recs,
     }

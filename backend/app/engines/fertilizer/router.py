@@ -10,19 +10,20 @@ router = APIRouter(prefix="/fertilizer", tags=["Fertilizer Engine"])
 
 @router.post("/recommend", response_model=FertilizerResponse)
 async def fertilizer_recommendation(payload: FertilizerRequest) -> FertilizerResponse:
-    """Get NPK recommendation, product selection, schedule, and cost estimate.
+    """Deficiency-driven fertilizer recommendation.
 
-    Accepts crop type, target yield, and soil data from Soil Engine.
-    Returns optimal fertilizer plan with application schedule.
+    Accepts soil diagnostics (deficiencies, health, pH) from Soil Engine,
+    selected crop from Crop Engine, and optional farm area from the farmer.
+    Returns optimized fertilizer list, quantities, schedule, and advisory notes.
     """
     try:
-        result = await recommend_fertilizer(
-            crop_type=payload.crop_type,
-            target_yield=payload.target_yield,
-            soil_ph=payload.soil_ph,
-            organic_carbon=payload.organic_carbon,
-            clay_percent=payload.clay_percent,
-            area_hectares=payload.area_hectares,
+        result = recommend_fertilizer(
+            deficiencies=payload.soil_report.deficiencies,
+            soil_health=payload.soil_report.soil_health,
+            ph_status=payload.soil_report.ph_status,
+            selected_crop=payload.selected_crop,
+            land_area=payload.land_area,
+            unit=payload.unit.value,
         )
         return FertilizerResponse(**result)
     except FertilizerEngineError as exc:

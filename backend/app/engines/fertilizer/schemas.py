@@ -1,54 +1,116 @@
-"""Fertilizer Engine schemas — request/response models."""
+"""Fertilizer Optimization Engine schemas — request/response models.
 
-from pydantic import BaseModel, Field
+Takes processed outputs from Soil Engine + Crop Engine + optional farmer
+land area to recommend the right fertilizer type, quantity, and schedule.
+"""
+
+from __future__ import annotations
+
+from enum import StrEnum
+
+from pydantic import BaseModel, Field, field_validator
+
+# -- Enumerations ---------------------------------------------------------
+
+
+class AreaUnit(StrEnum):
+    """Land area measurement units."""
+
+    ACRE = "acre"
+    HECTARE = "hectare"
+
+
+# -- Request Sub-Models ---------------------------------------------------
+
+
+class SoilReport(BaseModel):
+    """Soil diagnostics (from Soil Engine output)."""
+
+    deficiencies: list[str] = Field(
+        default_factory=list,
+        description="Nutrient deficiencies detected",
+        json_schema_extra={"example": ["Nitrogen"]},
+    )
+    soil_health: str = Field(
+        default="Medium",
+        description="Overall soil health label",
+        json_schema_extra={"example": "Medium"},
+    )
+    ph_status: str = Field(
+        default="Neutral",
+        description="pH classification",
+        json_schema_extra={"example": "Neutral"},
+    )
+
+
+# -- Main Request ---------------------------------------------------------
 
 
 class FertilizerRequest(BaseModel):
     """Request payload for fertilizer recommendation."""
 
-    crop_type: str = Field(default="rice", description="Crop type")
-    target_yield: float = Field(default=5.0, description="Target yield (t/ha)")
-    soil_ph: float | None = Field(default=None, description="Soil pH from Soil Engine")
-    organic_carbon: int | None = Field(default=None, description="Organic carbon (g/dm³)")
-    clay_percent: int | None = Field(default=None, description="Clay content (g/kg)")
-    area_hectares: float = Field(default=1.0, description="Farm area in hectares")
+    soil_report: SoilReport = Field(
+        default_factory=SoilReport,
+        description="Soil diagnostics from Soil Engine",
+    )
+    selected_crop: str = Field(
+        default="Rice",
+        min_length=2,
+        description="Crop selected (from Crop Engine or farmer)",
+        json_schema_extra={"example": "Red Chilli"},
+    )
+    land_area: float = Field(
+        default=1.0,
+        gt=0,
+        le=10000,
+        description="Farm area",
+        json_schema_extra={"example": 2.0},
+    )
+    unit: AreaUnit = Field(
+        default=AreaUnit.ACRE,
+        description="Area unit (acre or hectare)",
+        json_schema_extra={"example": "acre"},
+    )
+
+    @field_validator("selected_crop")
+    @classmethod
+    def normalise_crop(cls, v: str) -> str:
+        """Strip and title-case crop name."""
+        return v.strip().title()
 
 
-class NPKRecommendation(BaseModel):
-    """Nitrogen, Phosphorus, Potassium recommendation."""
-
-    nitrogen_kg_per_ha: float = Field(description="Nitrogen dose (kg/ha)")
-    phosphorus_kg_per_ha: float = Field(description="Phosphorus (P₂O₅) dose (kg/ha)")
-    potassium_kg_per_ha: float = Field(description="Potassium (K₂O) dose (kg/ha)")
-    total_nitrogen_kg: float = Field(description="Total N for entire area")
-    total_phosphorus_kg: float = Field(description="Total P₂O₅ for entire area")
-    total_potassium_kg: float = Field(description="Total K₂O for entire area")
+# -- Response Sub-Models --------------------------------------------------
 
 
-class FertilizerProduct(BaseModel):
-    """Recommended fertilizer product."""
+class ScheduleStep(BaseModel):
+    """A single step in the application schedule."""
 
-    name: str = Field(description="Product name (e.g., Urea, DAP, MOP)")
-    composition: str = Field(description="NPK composition ratio")
-    quantity_kg_per_ha: float = Field(description="Recommended quantity (kg/ha)")
-    total_quantity_kg: float = Field(description="Total for entire area")
-    estimated_cost_usd: float = Field(description="Estimated cost")
-
-
-class ApplicationSchedule(BaseModel):
-    """Fertilizer application timing."""
-
-    stage: str = Field(description="Growth stage for application")
+    stage: str = Field(description="Application stage label")
     timing: str = Field(description="When to apply")
     products: list[str] = Field(description="Which products to apply")
-    notes: str = Field(description="Application method and tips")
+    notes: str = Field(description="Method and tips")
+
+
+# -- Main Response --------------------------------------------------------
 
 
 class FertilizerResponse(BaseModel):
-    """Complete fertilizer intelligence output."""
+    """Complete fertilizer recommendation output."""
 
-    npk_recommendation: NPKRecommendation
-    products: list[FertilizerProduct]
-    application_schedule: list[ApplicationSchedule]
-    cost_summary: dict[str, float] = Field(description="Cost breakdown")
-    recommendations: list[str] = Field(description="Fertilizer management tips")
+    fertilizers: list[str] = Field(description="Recommended fertilizer names")
+    quantity_per_acre: dict[str, str] = Field(
+        description="Dosage per acre for each fertilizer",
+    )
+    total_required: dict[str, str] = Field(
+        description="Total quantity for entire farm area",
+    )
+    schedule: list[ScheduleStep] = Field(
+        description="Application schedule with timing",
+    )
+    notes: list[str] = Field(description="Advisory messages and tips")
+
+    # Backward-compat: advisory engine reads application_schedule
+    application_schedule: list[ScheduleStep] = Field(
+        default_factory=list,
+        description="Alias for schedule (advisory compat)",
+    )

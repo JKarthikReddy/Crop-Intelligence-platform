@@ -1,7 +1,7 @@
-"""Fertilizer Engine — NPK recommendations and nutrient management.
+"""Fertilizer Optimization Engine — deficiency-driven nutrient management.
 
-Provides fertilizer dosage calculations, nutrient gap analysis,
-cost optimization, and application scheduling.
+Takes soil diagnostics + crop selection → recommends fertilizer type,
+quantity, application schedule, and advisory notes.
 """
 
 from app.engines.fertilizer.service import FertilizerEngineError, recommend_fertilizer
