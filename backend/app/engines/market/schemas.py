@@ -1,54 +1,84 @@
-"""Market Engine schemas — request/response models."""
+"""Market Intelligence Engine schemas — request/response models.
 
-from pydantic import BaseModel, Field
+Takes crop name from Crop Engine + farmer location/quantity to provide
+current mandi prices, price trends, and sell/hold recommendations.
+"""
+
+from __future__ import annotations
+
+from pydantic import BaseModel, Field, field_validator
+
+# -- Request ---------------------------------------------------------------
 
 
 class MarketRequest(BaseModel):
-    """Request payload for market analysis."""
+    """Request payload for market intelligence."""
 
-    crop_type: str = Field(default="rice", description="Crop type")
-    region: str = Field(default="south_asia", description="Market region")
-    estimated_yield_tons: float | None = Field(default=None, description="Expected yield (tons)")
-    area_hectares: float = Field(default=1.0, description="Farm area in hectares")
-    production_cost_usd: float | None = Field(default=None, description="Total production cost")
+    crop: str = Field(
+        default="Rice",
+        min_length=2,
+        description="Crop name (from Crop Engine or farmer)",
+        json_schema_extra={"example": "Red Chilli"},
+    )
+    location: str = Field(
+        default="Guntur",
+        min_length=2,
+        description="Farmer's mandi / district / city",
+        json_schema_extra={"example": "Guntur"},
+    )
+    quantity: float | None = Field(
+        default=None,
+        gt=0,
+        description="Quantity in quintals (optional)",
+        json_schema_extra={"example": 20},
+    )
+
+    @field_validator("crop")
+    @classmethod
+    def normalise_crop(cls, v: str) -> str:
+        return v.strip().title()
+
+    @field_validator("location")
+    @classmethod
+    def normalise_location(cls, v: str) -> str:
+        return v.strip().title()
 
 
-class PriceSnapshot(BaseModel):
-    """Current and historical price data."""
-
-    current_price_usd_per_ton: float = Field(description="Current market price")
-    price_30d_ago: float = Field(description="Price 30 days ago")
-    price_90d_ago: float = Field(description="Price 90 days ago")
-    price_365d_ago: float = Field(description="Price 1 year ago")
-    price_trend: str = Field(description="Rising / Stable / Declining")
-    price_change_30d_pct: float = Field(description="30-day price change (%)")
+# -- Response sub-models ---------------------------------------------------
 
 
-class SeasonalPattern(BaseModel):
-    """Seasonal price pattern analysis."""
+class MandiPrice(BaseModel):
+    """Price record for a specific mandi."""
 
-    best_sell_months: list[str] = Field(description="Months with historically highest prices")
-    worst_sell_months: list[str] = Field(description="Months with historically lowest prices")
-    current_season_outlook: str = Field(description="Outlook for current period")
-    seasonality_strength: str = Field(description="Strong / Moderate / Weak")
+    mandi: str = Field(description="Mandi / market name")
+    price: float = Field(description="Price in rs/quintal")
+    distance_km: float | None = Field(default=None, description="Approx distance from farmer")
 
 
-class ProfitabilityEstimate(BaseModel):
-    """Farm profitability estimate."""
-
-    gross_revenue_usd: float = Field(description="Estimated revenue")
-    production_cost_usd: float = Field(description="Total production cost")
-    net_profit_usd: float = Field(description="Net profit")
-    profit_margin_pct: float = Field(description="Profit margin (%)")
-    break_even_price_usd: float = Field(description="Break-even price per ton")
+# -- Main Response ---------------------------------------------------------
 
 
 class MarketResponse(BaseModel):
     """Complete market intelligence output."""
 
-    price_snapshot: PriceSnapshot
-    seasonal_pattern: SeasonalPattern
-    profitability: ProfitabilityEstimate
-    sell_recommendation: str = Field(description="Sell now / Hold / Wait for peak")
-    confidence: float = Field(description="Confidence in recommendation (0-1)")
-    recommendations: list[str] = Field(description="Market-related tips")
+    current_price: float = Field(description="Current mandi price (rs/quintal)")
+    unit: str = Field(default="₹/quintal", description="Price unit label")
+    seven_day_avg: float = Field(description="7-day average price")
+    trend: str = Field(description="Increasing / Stable / Decreasing")
+    recommendation: str = Field(description="Sell / Hold / Sell immediately")
+    expected_price_next_week: float = Field(description="Predicted price next week")
+    nearby_mandis: list[MandiPrice] = Field(
+        default_factory=list,
+        description="Prices at nearby mandis",
+    )
+    price_history: list[dict[str, object]] = Field(
+        default_factory=list,
+        description="Recent price data points (label + price)",
+    )
+    notes: list[str] = Field(default_factory=list, description="Advisory notes")
+
+    # Backward-compat — advisory engine reads sell_recommendation
+    sell_recommendation: str = Field(
+        default="",
+        description="Alias for recommendation (advisory compat)",
+    )

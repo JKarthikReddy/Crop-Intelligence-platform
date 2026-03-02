@@ -1,316 +1,555 @@
-"""Market Engine service — market intelligence, price trends, and sell advisory.
+"""Market Intelligence Engine — mandi prices, trend analysis & sell/hold advisory.
 
-Pure service layer:
-- Simulated crop market price data (deterministic for demo)
-- Seasonal pattern analysis
-- Profitability estimation
-- Sell-timing recommendation
+Pure service layer (no external I/O):
+1. Crop-location mandi price database (30 Indian crops x key mandis)
+2. 7-day price history simulation (deterministic, date-seeded)
+3. Trend analysis (current vs 7-day avg)
+4. Sell / Hold decision logic
+5. Next-week price prediction (linear extrapolation)
 """
 
+from __future__ import annotations
+
+import hashlib
 import math
-from datetime import UTC, datetime
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
-# ── Crop Price Database (USD per metric ton, base prices) ────────
-_BASE_PRICES: dict[str, dict[str, Any]] = {
-    "rice": {
-        "base_price": 380,
-        "volatility": 0.08,
-        "seasonal_peak_months": [3, 4, 5],  # Mar-May (before new harvest)
-        "seasonal_low_months": [10, 11, 12],  # Oct-Dec (harvest season)
-        "annual_trend": 0.03,  # 3% annual increase
-    },
-    "wheat": {
-        "base_price": 310,
-        "volatility": 0.10,
-        "seasonal_peak_months": [8, 9, 10],  # Aug-Oct
-        "seasonal_low_months": [4, 5, 6],  # Apr-Jun (harvest)
-        "annual_trend": 0.025,
-    },
-    "maize": {
-        "base_price": 260,
-        "volatility": 0.12,
-        "seasonal_peak_months": [4, 5, 6],  # Apr-Jun
-        "seasonal_low_months": [9, 10, 11],  # Sep-Nov (harvest)
-        "annual_trend": 0.02,
-    },
-    "soybean": {
-        "base_price": 520,
-        "volatility": 0.09,
-        "seasonal_peak_months": [6, 7, 8],  # Jun-Aug
-        "seasonal_low_months": [1, 2, 3],  # Jan-Mar (post-harvest)
-        "annual_trend": 0.035,
-    },
-}
-
-# ── Region Multipliers ───────────────────────────────────────────
-_REGION_MULTIPLIER: dict[str, float] = {
-    "south_asia": 0.85,
-    "southeast_asia": 0.90,
-    "east_africa": 0.80,
-    "west_africa": 0.78,
-    "latin_america": 0.95,
-    "global": 1.0,
-}
-
-_MONTH_NAMES = [
-    "January",
-    "February",
-    "March",
-    "April",
-    "May",
-    "June",
-    "July",
-    "August",
-    "September",
-    "October",
-    "November",
-    "December",
-]
+# ── Exception ────────────────────────────────────────────────────
 
 
 class MarketEngineError(Exception):
     """Raised when market analysis fails."""
 
 
-def _simulate_price(base: float, volatility: float, month: int, year: int) -> float:
-    """Deterministic price simulation using sine wave + trend."""
-    # Seasonal component (sine wave peaking at different months per crop)
-    seasonal = math.sin(2 * math.pi * month / 12) * volatility * base
-    # Annual trend
-    years_from_2024 = year - 2024
-    trend = base * (1 + 0.03 * years_from_2024)
-    return round(trend + seasonal, 2)
+# ── Crop Mandi Price Database (₹ per quintal, base prices) ──────
+# Aligned with CROP_DB names in the Crop Engine.
+# Each crop stores: base_price, volatility (0-1 daily jitter),
+# seasonal_peak_months, seasonal_low_months.
+
+_CROP_PRICES: dict[str, dict[str, Any]] = {
+    "Rice": {
+        "base_price": 2200,
+        "volatility": 0.04,
+        "seasonal_peak_months": [3, 4, 5],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Wheat": {
+        "base_price": 2400,
+        "volatility": 0.03,
+        "seasonal_peak_months": [8, 9, 10],
+        "seasonal_low_months": [4, 5, 6],
+    },
+    "Maize": {
+        "base_price": 2100,
+        "volatility": 0.05,
+        "seasonal_peak_months": [4, 5, 6],
+        "seasonal_low_months": [9, 10, 11],
+    },
+    "Red Chilli": {
+        "base_price": 14500,
+        "volatility": 0.06,
+        "seasonal_peak_months": [2, 3, 4],
+        "seasonal_low_months": [8, 9, 10],
+    },
+    "Cotton": {
+        "base_price": 6800,
+        "volatility": 0.05,
+        "seasonal_peak_months": [3, 4, 5],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Groundnut": {
+        "base_price": 5500,
+        "volatility": 0.04,
+        "seasonal_peak_months": [5, 6, 7],
+        "seasonal_low_months": [11, 12, 1],
+    },
+    "Soybean": {
+        "base_price": 4600,
+        "volatility": 0.05,
+        "seasonal_peak_months": [6, 7, 8],
+        "seasonal_low_months": [1, 2, 3],
+    },
+    "Sugarcane": {
+        "base_price": 350,
+        "volatility": 0.02,
+        "seasonal_peak_months": [1, 2, 3],
+        "seasonal_low_months": [7, 8, 9],
+    },
+    "Tobacco": {
+        "base_price": 13000,
+        "volatility": 0.05,
+        "seasonal_peak_months": [4, 5, 6],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Turmeric": {
+        "base_price": 8500,
+        "volatility": 0.07,
+        "seasonal_peak_months": [3, 4, 5],
+        "seasonal_low_months": [9, 10, 11],
+    },
+    "Sunflower": {
+        "base_price": 5800,
+        "volatility": 0.04,
+        "seasonal_peak_months": [5, 6, 7],
+        "seasonal_low_months": [11, 12, 1],
+    },
+    "Sorghum": {
+        "base_price": 3200,
+        "volatility": 0.03,
+        "seasonal_peak_months": [4, 5, 6],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Bajra": {
+        "base_price": 2500,
+        "volatility": 0.04,
+        "seasonal_peak_months": [3, 4, 5],
+        "seasonal_low_months": [9, 10, 11],
+    },
+    "Pulses (Moong)": {
+        "base_price": 7500,
+        "volatility": 0.05,
+        "seasonal_peak_months": [5, 6, 7],
+        "seasonal_low_months": [11, 12, 1],
+    },
+    "Pulses (Urad)": {
+        "base_price": 6800,
+        "volatility": 0.05,
+        "seasonal_peak_months": [4, 5, 6],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Chickpea": {
+        "base_price": 5200,
+        "volatility": 0.04,
+        "seasonal_peak_months": [6, 7, 8],
+        "seasonal_low_months": [12, 1, 2],
+    },
+    "Lentil": {
+        "base_price": 5800,
+        "volatility": 0.04,
+        "seasonal_peak_months": [7, 8, 9],
+        "seasonal_low_months": [1, 2, 3],
+    },
+    "Mustard": {
+        "base_price": 5500,
+        "volatility": 0.04,
+        "seasonal_peak_months": [8, 9, 10],
+        "seasonal_low_months": [4, 5, 6],
+    },
+    "Potato": {
+        "base_price": 1800,
+        "volatility": 0.08,
+        "seasonal_peak_months": [7, 8, 9],
+        "seasonal_low_months": [1, 2, 3],
+    },
+    "Onion": {
+        "base_price": 2200,
+        "volatility": 0.10,
+        "seasonal_peak_months": [8, 9, 10],
+        "seasonal_low_months": [1, 2, 3],
+    },
+    "Tomato": {
+        "base_price": 2500,
+        "volatility": 0.12,
+        "seasonal_peak_months": [5, 6, 7],
+        "seasonal_low_months": [11, 12, 1],
+    },
+    "Banana": {
+        "base_price": 1500,
+        "volatility": 0.05,
+        "seasonal_peak_months": [4, 5, 6],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Coconut": {
+        "base_price": 2800,
+        "volatility": 0.03,
+        "seasonal_peak_months": [3, 4, 5],
+        "seasonal_low_months": [9, 10, 11],
+    },
+    "Mango": {
+        "base_price": 4000,
+        "volatility": 0.08,
+        "seasonal_peak_months": [4, 5, 6],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Tea": {
+        "base_price": 18000,
+        "volatility": 0.03,
+        "seasonal_peak_months": [6, 7, 8],
+        "seasonal_low_months": [12, 1, 2],
+    },
+    "Coffee": {
+        "base_price": 42000,
+        "volatility": 0.04,
+        "seasonal_peak_months": [3, 4, 5],
+        "seasonal_low_months": [9, 10, 11],
+    },
+    "Jute": {
+        "base_price": 5000,
+        "volatility": 0.04,
+        "seasonal_peak_months": [7, 8, 9],
+        "seasonal_low_months": [1, 2, 3],
+    },
+    "Sesame": {
+        "base_price": 7200,
+        "volatility": 0.05,
+        "seasonal_peak_months": [4, 5, 6],
+        "seasonal_low_months": [10, 11, 12],
+    },
+    "Castor": {
+        "base_price": 6000,
+        "volatility": 0.04,
+        "seasonal_peak_months": [5, 6, 7],
+        "seasonal_low_months": [11, 12, 1],
+    },
+}
+
+_DEFAULT_CROP_PRICE: dict[str, Any] = {
+    "base_price": 3000,
+    "volatility": 0.05,
+    "seasonal_peak_months": [4, 5, 6],
+    "seasonal_low_months": [10, 11, 12],
+}
 
 
-def get_price_snapshot(crop_type: str, region: str) -> dict[str, Any]:
-    """Get current and historical prices."""
-    crop_data = _BASE_PRICES.get(crop_type, _BASE_PRICES["rice"])
-    multiplier = _REGION_MULTIPLIER.get(region, 1.0)
-    now = datetime.now(UTC)
+# ── Location → Nearby Mandis Database ────────────────────────────
+# Maps location (title-cased) → list of (mandi_name, distance_km, price_offset)
+# price_offset: multiplier (1.0 = same as base, 0.95 = 5% cheaper, etc.)
 
-    current = (
-        _simulate_price(crop_data["base_price"], crop_data["volatility"], now.month, now.year)
-        * multiplier
-    )
-    m1 = now.month - 1 if now.month > 1 else 12
-    y1 = now.year if now.month > 1 else now.year - 1
-    price_30d = (
-        _simulate_price(crop_data["base_price"], crop_data["volatility"], m1, y1) * multiplier
-    )
+_MANDI_MAP: dict[str, list[tuple[str, float, float]]] = {
+    "Guntur": [
+        ("Guntur Mirchi Yard", 0, 1.02),
+        ("Chilakaluripet Mandi", 25, 0.97),
+        ("Narasaraopet Mandi", 40, 0.95),
+        ("Vijayawada Market", 70, 1.00),
+    ],
+    "Kurnool": [
+        ("Kurnool Mandi", 0, 1.00),
+        ("Nandyal Market", 55, 0.96),
+        ("Adoni Mandi", 80, 0.94),
+    ],
+    "Hyderabad": [
+        ("Begum Bazaar", 0, 1.05),
+        ("Bowenpally Market", 10, 1.03),
+        ("Gaddiannaram Mandi", 15, 1.01),
+        ("Medchal Mandi", 30, 0.98),
+    ],
+    "Warangal": [
+        ("Warangal Mandi", 0, 1.00),
+        ("Hanamkonda Market", 5, 0.99),
+        ("Karimnagar Mandi", 80, 0.96),
+    ],
+    "Vijayawada": [
+        ("Vijayawada Market Yard", 0, 1.01),
+        ("Guntur Mirchi Yard", 35, 1.02),
+        ("Eluru Mandi", 60, 0.96),
+    ],
+    "Nashik": [
+        ("Nashik APMC (Lasalgaon)", 0, 1.04),
+        ("Pimpalgaon Mandi", 20, 1.00),
+        ("Niphad Market", 30, 0.98),
+    ],
+    "Indore": [
+        ("Indore Mandi", 0, 1.02),
+        ("Dewas Market", 40, 0.97),
+        ("Ujjain Mandi", 55, 0.96),
+    ],
+    "Ludhiana": [
+        ("Ludhiana Grain Market", 0, 1.03),
+        ("Jalandhar Mandi", 60, 1.00),
+        ("Amritsar Mandi", 130, 1.01),
+    ],
+    "Jaipur": [
+        ("Jaipur Mandi", 0, 1.01),
+        ("Chomu Market", 35, 0.97),
+        ("Sikar Mandi", 100, 0.95),
+    ],
+    "Kolhapur": [
+        ("Kolhapur APMC", 0, 1.02),
+        ("Sangli Mandi", 50, 1.00),
+        ("Solapur Market", 120, 0.96),
+    ],
+}
 
-    m3 = now.month - 3 if now.month > 3 else now.month + 9
-    y3 = now.year if now.month > 3 else now.year - 1
-    price_90d = (
-        _simulate_price(crop_data["base_price"], crop_data["volatility"], m3, y3) * multiplier
-    )
-
-    price_365d = (
-        _simulate_price(crop_data["base_price"], crop_data["volatility"], now.month, now.year - 1)
-        * multiplier
-    )
-
-    change_30d = ((current - price_30d) / price_30d) * 100 if price_30d else 0
-
-    if change_30d > 2:
-        trend = "Rising"
-    elif change_30d < -2:
-        trend = "Declining"
-    else:
-        trend = "Stable"
-
-    return {
-        "current_price_usd_per_ton": round(current, 2),
-        "price_30d_ago": round(price_30d, 2),
-        "price_90d_ago": round(price_90d, 2),
-        "price_365d_ago": round(price_365d, 2),
-        "price_trend": trend,
-        "price_change_30d_pct": round(change_30d, 1),
-    }
+# Default mandis for unknown locations
+_DEFAULT_MANDIS: list[tuple[str, float, float]] = [
+    ("Local Mandi", 0, 1.00),
+    ("District Market Yard", 30, 0.97),
+    ("Nearest APMC", 60, 0.95),
+]
 
 
-def get_seasonal_pattern(crop_type: str) -> dict[str, Any]:
-    """Analyze seasonal price patterns."""
-    crop_data = _BASE_PRICES.get(crop_type, _BASE_PRICES["rice"])
-    now = datetime.now(UTC)
+# =====================================================================
+#  INTERNAL HELPERS
+# =====================================================================
 
-    peak_months = [_MONTH_NAMES[m - 1] for m in crop_data["seasonal_peak_months"]]
-    low_months = [_MONTH_NAMES[m - 1] for m in crop_data["seasonal_low_months"]]
 
-    if now.month in crop_data["seasonal_peak_months"]:
-        outlook = "Currently in peak price season — favorable for selling"
-    elif now.month in crop_data["seasonal_low_months"]:
-        outlook = "Currently in low price season — consider storage if possible"
-    else:
-        months_to_peak = min((m - now.month) % 12 for m in crop_data["seasonal_peak_months"])
-        outlook = (
-            f"Prices expected to improve in {months_to_peak} month(s) — hold if storage available"
+def _deterministic_jitter(seed_str: str, amplitude: float) -> float:
+    """Produce a deterministic float in [-amplitude, +amplitude] from a seed string.
+
+    Uses MD5 hash → stable across runs for the same date+crop+location.
+    """
+    h = hashlib.md5(seed_str.encode(), usedforsecurity=False).hexdigest()
+    normalized = int(h[:8], 16) / 0xFFFFFFFF  # 0..1
+    return (normalized * 2 - 1) * amplitude
+
+
+def _simulate_price(
+    base: float,
+    volatility: float,
+    peak_months: list[int],
+    date: datetime,
+    location: str = "",
+) -> float:
+    """Deterministic daily price for a crop at a date.
+
+    Combines:
+    - seasonal sine wave (peak at crop's peak months)
+    - small daily jitter (hash-based for reproducibility)
+    """
+    # Seasonal component: peak at average of peak months
+    avg_peak = sum(peak_months) / len(peak_months)
+    seasonal = math.sin(2 * math.pi * (date.month - avg_peak) / 12) * volatility * base
+
+    # Daily jitter (small, deterministic)
+    seed = f"{date.isoformat()[:10]}:{location}:{base}"
+    jitter = _deterministic_jitter(seed, volatility * base * 0.3)
+
+    return round(max(base * 0.5, base + seasonal + jitter), 2)
+
+
+def _get_price_history(
+    crop_info: dict[str, Any],
+    location: str,
+    days: int = 7,
+    ref_date: datetime | None = None,
+) -> list[dict[str, object]]:
+    """Build a list of {label, price} for the last *days* days."""
+    now = ref_date or datetime.now(UTC)
+    history: list[dict[str, object]] = []
+    labels = [
+        "Today",
+        "Yesterday",
+        "2 days ago",
+        "3 days ago",
+        "4 days ago",
+        "5 days ago",
+        "6 days ago",
+    ]
+
+    for i in range(days):
+        d = now - timedelta(days=i)
+        price = _simulate_price(
+            crop_info["base_price"],
+            crop_info["volatility"],
+            crop_info["seasonal_peak_months"],
+            d,
+            location,
+        )
+        label = labels[i] if i < len(labels) else f"{i} days ago"
+        history.append({"label": label, "price": price})
+
+    return history
+
+
+def _compute_trend(current: float, seven_day_avg: float) -> str:
+    """Compare current price to 7-day average → trend label."""
+    if seven_day_avg == 0:
+        return "Stable"
+    pct = ((current - seven_day_avg) / seven_day_avg) * 100
+    if pct > 2:
+        return "Increasing"
+    if pct < -2:
+        return "Decreasing"
+    return "Stable"
+
+
+def _predict_next_week(history: list[dict[str, object]]) -> float:
+    """Simple linear extrapolation from the 7-day history.
+
+    Fits a line through the daily prices and projects 7 days forward.
+    """
+    prices = [float(h["price"]) for h in history]
+    n = len(prices)
+    if n < 2:
+        return prices[0] if prices else 0
+
+    # prices[0] = today, prices[-1] = oldest → reverse for time order
+    ordered = list(reversed(prices))
+    x_mean = (n - 1) / 2
+    y_mean = sum(ordered) / n
+
+    num = sum((i - x_mean) * (ordered[i] - y_mean) for i in range(n))
+    den = sum((i - x_mean) ** 2 for i in range(n))
+    slope = num / den if den != 0 else 0
+
+    # Project 7 days ahead from the latest point
+    predicted = ordered[-1] + slope * 7
+    return round(max(0, predicted), 2)
+
+
+def _decide_recommendation(
+    current: float,
+    seven_day_avg: float,
+    trend: str,
+    predicted: float,
+) -> str:
+    """Sell / Hold decision logic.
+
+    - Price rising        → Hold for 3-5 days
+    - Price peaked / flat → Sell now at current level
+    - Falling rapidly     → Sell immediately
+    """
+    if trend == "Increasing" and predicted > current:
+        return "Hold for 3\u20135 days \u2014 prices still rising"
+    if trend == "Decreasing" and predicted < current * 0.97:
+        return "Sell immediately \u2014 prices falling rapidly"
+    if trend == "Decreasing":
+        return "Sell now \u2014 prices are declining"
+    # Stable or peaked
+    if predicted <= current:
+        return "Sell now \u2014 prices appear to have peaked"
+    return "Monitor market \u2014 prices are stable"
+
+
+def _build_nearby_mandis(
+    location: str,
+    crop_info: dict[str, Any],
+    ref_date: datetime | None = None,
+) -> list[dict[str, Any]]:
+    """Look up nearby mandis and compute their current prices."""
+    now = ref_date or datetime.now(UTC)
+    mandis_raw = _MANDI_MAP.get(location, _DEFAULT_MANDIS)
+    result: list[dict[str, Any]] = []
+
+    for name, dist, offset in mandis_raw:
+        price = (
+            _simulate_price(
+                crop_info["base_price"],
+                crop_info["volatility"],
+                crop_info["seasonal_peak_months"],
+                now,
+                name,
+            )
+            * offset
+        )
+        result.append(
+            {
+                "mandi": name,
+                "price": round(price, 2),
+                "distance_km": dist if dist > 0 else None,
+            }
         )
 
-    strength = "Strong" if crop_data["volatility"] >= 0.10 else "Moderate"
-
-    return {
-        "best_sell_months": peak_months,
-        "worst_sell_months": low_months,
-        "current_season_outlook": outlook,
-        "seasonality_strength": strength,
-    }
+    return result
 
 
-def estimate_profitability(
-    crop_type: str,
-    region: str,
-    estimated_yield_tons: float | None,
-    area_hectares: float,
-    production_cost_usd: float | None,
-) -> dict[str, Any]:
-    """Estimate farm profitability."""
-    price = get_price_snapshot(crop_type, region)
-    current_price = price["current_price_usd_per_ton"]
-
-    # Default production costs per hectare by crop
-    default_costs: dict[str, float] = {
-        "rice": 650,
-        "wheat": 480,
-        "maize": 520,
-        "soybean": 400,
-    }
-
-    # Default yield (t/ha)
-    default_yields: dict[str, float] = {
-        "rice": 4.5,
-        "wheat": 3.5,
-        "maize": 5.5,
-        "soybean": 2.5,
-    }
-
-    yield_tons = estimated_yield_tons or (default_yields.get(crop_type, 4.0) * area_hectares)
-    cost = production_cost_usd or (default_costs.get(crop_type, 500) * area_hectares)
-
-    revenue = yield_tons * current_price
-    profit = revenue - cost
-    margin = (profit / revenue * 100) if revenue > 0 else 0
-    break_even = cost / yield_tons if yield_tons > 0 else 0
-
-    return {
-        "gross_revenue_usd": round(revenue, 2),
-        "production_cost_usd": round(cost, 2),
-        "net_profit_usd": round(profit, 2),
-        "profit_margin_pct": round(margin, 1),
-        "break_even_price_usd": round(break_even, 2),
-    }
-
-
-def determine_sell_recommendation(
-    price_snapshot: dict[str, Any],
-    seasonal: dict[str, Any],
-    profitability: dict[str, Any],
-) -> tuple[str, float]:
-    """Determine sell recommendation and confidence."""
-    score = 0.5  # neutral
-
-    # Price trend factor
-    if price_snapshot["price_trend"] == "Rising":
-        score += 0.15
-    elif price_snapshot["price_trend"] == "Declining":
-        score -= 0.15
-
-    # Seasonal factor
-    if "peak" in seasonal["current_season_outlook"].lower():
-        score += 0.20
-    elif "low" in seasonal["current_season_outlook"].lower():
-        score -= 0.20
-
-    # Profitability factor
-    if profitability["profit_margin_pct"] > 30:
-        score += 0.10
-    elif profitability["profit_margin_pct"] < 10:
-        score -= 0.10
-
-    confidence = min(1.0, max(0.3, abs(score - 0.5) * 2 + 0.4))
-
-    if score >= 0.65:
-        return "Sell now — prices are favorable", round(confidence, 2)
-    elif score <= 0.35:
-        return "Hold — wait for better prices", round(confidence, 2)
-    else:
-        return "Monitor market — prices are neutral", round(confidence, 2)
-
-
-def generate_market_recommendations(
-    crop_type: str,
-    price_snapshot: dict[str, Any],
-    profitability: dict[str, Any],
+def _generate_notes(
+    crop: str,
+    trend: str,
+    recommendation: str,
+    current: float,
+    seven_day_avg: float,
+    quantity: float | None,
 ) -> list[str]:
-    """Generate market advice."""
-    recs: list[str] = []
+    """Generate advisory notes."""
+    notes: list[str] = []
 
-    if price_snapshot["price_trend"] == "Rising":
-        recs.append(
-            f"{crop_type.title()} prices trending upward — consider selling in batches to capture gains"
+    if trend == "Increasing":
+        notes.append(
+            f"{crop} prices are trending upward \u2014 consider selling in batches "
+            f"to capture gains over the next few days"
         )
-    elif price_snapshot["price_trend"] == "Declining":
-        recs.append(
-            f"{crop_type.title()} prices declining — explore storage options or forward contracts to lock prices"
+    elif trend == "Decreasing":
+        notes.append(
+            f"{crop} prices are declining \u2014 explore storage options or "
+            f"forward contracts to lock in prices"
+        )
+    else:
+        notes.append(f"{crop} prices are stable \u2014 good time to sell at current levels")
+
+    if quantity and quantity > 50:
+        notes.append(
+            f"Large quantity ({quantity} quintals) \u2014 consider splitting into "
+            f"2\u20133 batches across different mandis for best average price"
         )
 
-    if profitability["profit_margin_pct"] < 15:
-        recs.append(
-            "Thin margins detected — review input costs and explore bulk purchasing for fertilizers"
-        )
-
-    recs.append(
-        "Diversify market channels: explore local mandis, government procurement, and online platforms"
+    notes.append("Compare prices across nearby mandis before finalizing the sale")
+    notes.append(
+        "Check government MSP (Minimum Support Price) to ensure you get "
+        "at least the guaranteed price"
     )
-    recs.append("Consider contract farming agreements for price stability in future seasons")
 
-    if profitability["break_even_price_usd"] > price_snapshot["current_price_usd_per_ton"] * 0.8:
-        recs.append(
-            "Break-even price is close to market price — optimize production costs urgently"
+    if "hold" in recommendation.lower():
+        notes.append(
+            "Ensure proper storage (moisture < 14%, pest protection) while " "holding stock"
         )
 
-    return recs
+    return notes
 
 
-# ── Main Entry Point ─────────────────────────────────────────────
+# =====================================================================
+#  MAIN ENTRY POINT
+# =====================================================================
 
 
-async def analyze_market(
-    crop_type: str = "rice",
-    region: str = "south_asia",
-    estimated_yield_tons: float | None = None,
-    area_hectares: float = 1.0,
-    production_cost_usd: float | None = None,
+def analyze_market(
+    crop: str = "Rice",
+    location: str = "Guntur",
+    quantity: float | None = None,
 ) -> dict[str, Any]:
-    """Full market intelligence — prices, seasonality, profitability, and sell advice.
+    """Full market intelligence — prices, trend, prediction & sell/hold advice.
+
+    Synchronous — no external I/O.
 
     Args:
-        crop_type: Crop being marketed.
-        region: Market region for price context.
-        estimated_yield_tons: Expected production (optional).
-        area_hectares: Farm area.
-        production_cost_usd: Total production cost (optional).
+        crop: Crop name (title-cased).
+        location: Farmer's mandi / district.
+        quantity: Quantity in quintals (optional).
 
     Returns:
-        Complete market intelligence dict.
+        Dict matching ``MarketResponse`` schema.
     """
-    price_snapshot = get_price_snapshot(crop_type, region)
-    seasonal = get_seasonal_pattern(crop_type)
-    profitability = estimate_profitability(
-        crop_type,
-        region,
-        estimated_yield_tons,
-        area_hectares,
-        production_cost_usd,
+    crop = crop.strip().title()
+    location = location.strip().title()
+
+    crop_info = _CROP_PRICES.get(crop, _DEFAULT_CROP_PRICE)
+    now = datetime.now(UTC)
+
+    # 1. Price history (last 7 days)
+    history = _get_price_history(crop_info, location, days=7, ref_date=now)
+
+    current_price = history[0]["price"]
+    prices = [float(h["price"]) for h in history]
+    seven_day_avg = round(sum(prices) / len(prices), 2)
+
+    # 2. Trend analysis
+    trend = _compute_trend(float(current_price), seven_day_avg)
+
+    # 3. Next-week prediction
+    predicted = _predict_next_week(history)
+
+    # 4. Sell / Hold
+    recommendation = _decide_recommendation(float(current_price), seven_day_avg, trend, predicted)
+
+    # 5. Nearby mandis
+    nearby = _build_nearby_mandis(location, crop_info, ref_date=now)
+
+    # 6. Advisory notes
+    notes = _generate_notes(
+        crop, trend, recommendation, float(current_price), seven_day_avg, quantity
     )
-    sell_rec, confidence = determine_sell_recommendation(price_snapshot, seasonal, profitability)
-    recs = generate_market_recommendations(crop_type, price_snapshot, profitability)
 
     return {
-        "price_snapshot": price_snapshot,
-        "seasonal_pattern": seasonal,
-        "profitability": profitability,
-        "sell_recommendation": sell_rec,
-        "confidence": confidence,
-        "recommendations": recs,
+        "current_price": float(current_price),
+        "unit": "\u20b9/quintal",
+        "seven_day_avg": seven_day_avg,
+        "trend": trend,
+        "recommendation": recommendation,
+        "expected_price_next_week": predicted,
+        "nearby_mandis": nearby,
+        "price_history": history,
+        "notes": notes,
+        # Backward compat for advisory engine
+        "sell_recommendation": recommendation,
     }

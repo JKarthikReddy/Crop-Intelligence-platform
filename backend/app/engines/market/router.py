@@ -1,4 +1,4 @@
-"""Market Engine router — REST endpoints for market intelligence."""
+"""Market Engine router - REST endpoints for mandi-based market intelligence."""
 
 from fastapi import APIRouter, HTTPException
 
@@ -10,18 +10,16 @@ router = APIRouter(prefix="/market", tags=["Market Engine"])
 
 @router.post("/analyze", response_model=MarketResponse)
 async def market_analysis(payload: MarketRequest) -> MarketResponse:
-    """Get market prices, seasonal patterns, profitability, and sell advice.
+    """Indian mandi price intelligence — current prices, trends & sell/hold advice.
 
-    Accepts crop type, region, yield estimate, and production costs.
-    Returns actionable market intelligence.
+    Accepts crop name, location, and optional quantity in quintals.
+    Returns Rs/quintal prices, 7-day trend, prediction & nearby mandis.
     """
     try:
-        result = await analyze_market(
-            crop_type=payload.crop_type,
-            region=payload.region,
-            estimated_yield_tons=payload.estimated_yield_tons,
-            area_hectares=payload.area_hectares,
-            production_cost_usd=payload.production_cost_usd,
+        result = analyze_market(
+            crop=payload.crop,
+            location=payload.location,
+            quantity=payload.quantity,
         )
         return MarketResponse(**result)
     except MarketEngineError as exc:

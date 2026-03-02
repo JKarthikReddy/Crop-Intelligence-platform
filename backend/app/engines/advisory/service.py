@@ -79,9 +79,17 @@ def _compute_farm_health(
         scores.append((disease_safety, 0.20))
 
     if market:
-        prof = market.get("profitability", {})
-        margin = prof.get("profit_margin_pct", 20)
-        market_score = min(100, max(0, margin * 2.5))
+        # Score based on trend and price vs 7-day average
+        trend = market.get("trend", "Stable")
+        cur = market.get("current_price", 0)
+        avg = market.get("seven_day_avg", cur or 1)
+        pct = ((cur - avg) / avg * 100) if avg else 0
+        if trend == "Increasing":
+            market_score = min(100, 65 + pct * 2)
+        elif trend == "Decreasing":
+            market_score = max(0, 40 + pct * 2)
+        else:
+            market_score = 55
         scores.append((market_score, 0.15))
 
     if not scores:
@@ -302,6 +310,9 @@ async def generate_advisory(
     async def _fert_coro(crop: str) -> dict[str, Any]:
         return recommend_fertilizer(selected_crop=crop)
 
+    async def _market_coro(crop: str) -> dict[str, Any]:
+        return analyze_market(crop=crop, location="India")
+
     results = await asyncio.gather(
         _run_engine("Soil", _soil_coro()),
         _run_engine("Weather", analyze_weather(lat=lat, lon=lon)),
@@ -313,11 +324,7 @@ async def generate_advisory(
         _run_engine("Disease", assess_disease_risk(crop_type=crop_type)),
         _run_engine(
             "Market",
-            analyze_market(
-                crop_type=crop_type,
-                region=region,
-                area_hectares=area_hectares,
-            ),
+            _market_coro(crop_type),
         ),
         return_exceptions=True,
     )

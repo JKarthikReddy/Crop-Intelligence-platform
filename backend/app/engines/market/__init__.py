@@ -1,7 +1,7 @@
-"""Market Engine — Crop market intelligence and price advisory.
+"""Market Engine — Indian mandi price intelligence & sell/hold advisory.
 
-Provides market prices, price trend analysis, best-sell-time advisory,
-and profitability estimation.
+Provides Rs/quintal mandi prices, 7-day trend analysis,
+next-week prediction, and sell/hold recommendation.
 """
 
 from app.engines.market.service import MarketEngineError, analyze_market
