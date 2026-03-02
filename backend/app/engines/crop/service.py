@@ -1,364 +1,1032 @@
-"""Crop Engine service — vegetation health, yield prediction, and crop analysis.
+"""Crop Recommendation Engine service — classification + ranking.
 
-Pure service layer:
-- Sentinel-2 NDVI for vegetation health
-- Sentinel-1 SAR for soil moisture
-- XGBoost + LSTM ensemble for yield forecasting
-- Crop growth stage estimation
-- Harvest window optimization
+Enterprise diagnostic engine (no external API calls):
+- 30-crop knowledge base with ideal growing conditions
+- Region/state filtering with district-level boosting
+- Feature-vector scoring against per-crop ideal ranges
+- Season filtering (Kharif / Rabi / Zaid)
+- Multi-factor ranking with confidence scores
+- Explainable reasoning generation
 """
 
-import math
-from datetime import datetime, timedelta
+from __future__ import annotations
+
 from typing import Any
 
 from loguru import logger
 
-from app.services.cache_service import NDVI_TTL, get_cache, make_bounds_cache_key, set_cache
-
-# Growth stage durations by crop (days from planting)
-_GROWTH_STAGES: dict[str, list[tuple[int, str]]] = {
-    "rice": [
-        (0, "germination"),
-        (20, "seedling"),
-        (50, "tillering"),
-        (80, "flowering"),
-        (110, "grain_filling"),
-        (140, "maturity"),
-    ],
-    "wheat": [
-        (0, "germination"),
-        (15, "seedling"),
-        (45, "tillering"),
-        (75, "heading"),
-        (100, "grain_filling"),
-        (130, "maturity"),
-    ],
-    "maize": [
-        (0, "germination"),
-        (14, "seedling"),
-        (40, "vegetative"),
-        (65, "tasseling"),
-        (90, "grain_filling"),
-        (120, "maturity"),
-    ],
-    "soybean": [
-        (0, "germination"),
-        (12, "seedling"),
-        (35, "vegetative"),
-        (55, "flowering"),
-        (80, "pod_filling"),
-        (110, "maturity"),
-    ],
-}
-
-# Typical yield ranges by crop (t/ha)
-_YIELD_RANGES: dict[str, tuple[float, float]] = {
-    "rice": (2.0, 8.0),
-    "wheat": (1.5, 6.5),
-    "maize": (3.0, 12.0),
-    "soybean": (1.0, 4.0),
-}
-
 
 class CropEngineError(Exception):
-    """Raised when crop analysis fails."""
+    """Raised when crop recommendation fails."""
 
 
-# ── NDVI Classification ──────────────────────────────────────────
+# =====================================================================
+#  CROP KNOWLEDGE BASE  (30 crops)
+# =====================================================================
+# Each entry contains ideal ranges for the 7-feature vector
+# [N, P, K, pH, temperature, humidity, rainfall]
+# plus region suitability and seasonal data.
+
+CROP_DB: dict[str, dict[str, Any]] = {
+    "Rice": {
+        "n": (60, 120),
+        "p": (30, 60),
+        "k": (30, 60),
+        "ph": (5.5, 7.0),
+        "temp": (22, 35),
+        "humidity": (70, 95),
+        "rainfall": (150, 300),
+        "seasons": ["Kharif", "Rabi"],
+        "states": [
+            "Andhra Pradesh",
+            "Telangana",
+            "Tamil Nadu",
+            "West Bengal",
+            "Punjab",
+            "Uttar Pradesh",
+            "Karnataka",
+            "Odisha",
+            "Bihar",
+        ],
+        "boost_districts": ["Guntur", "Krishna", "East Godavari", "West Godavari", "Nellore"],
+        "category": "Cereal",
+    },
+    "Wheat": {
+        "n": (80, 150),
+        "p": (40, 70),
+        "k": (30, 50),
+        "ph": (6.0, 7.5),
+        "temp": (12, 25),
+        "humidity": (40, 70),
+        "rainfall": (50, 100),
+        "seasons": ["Rabi"],
+        "states": [
+            "Punjab",
+            "Haryana",
+            "Uttar Pradesh",
+            "Madhya Pradesh",
+            "Rajasthan",
+            "Bihar",
+            "Gujarat",
+        ],
+        "boost_districts": ["Ludhiana", "Karnal", "Meerut"],
+        "category": "Cereal",
+    },
+    "Maize": {
+        "n": (60, 120),
+        "p": (30, 60),
+        "k": (30, 60),
+        "ph": (5.5, 7.5),
+        "temp": (20, 35),
+        "humidity": (50, 80),
+        "rainfall": (60, 120),
+        "seasons": ["Kharif", "Rabi"],
+        "states": [
+            "Andhra Pradesh",
+            "Karnataka",
+            "Rajasthan",
+            "Bihar",
+            "Madhya Pradesh",
+            "Uttar Pradesh",
+            "Telangana",
+        ],
+        "boost_districts": ["Guntur", "Prakasam", "Karimnagar"],
+        "category": "Cereal",
+    },
+    "Red Chilli": {
+        "n": (50, 100),
+        "p": (40, 80),
+        "k": (40, 80),
+        "ph": (6.0, 7.0),
+        "temp": (25, 38),
+        "humidity": (55, 80),
+        "rainfall": (60, 150),
+        "seasons": ["Kharif"],
+        "states": [
+            "Andhra Pradesh",
+            "Telangana",
+            "Karnataka",
+            "Maharashtra",
+        ],
+        "boost_districts": ["Guntur", "Prakasam", "Khammam", "Warangal"],
+        "category": "Spice",
+    },
+    "Cotton": {
+        "n": (50, 100),
+        "p": (25, 50),
+        "k": (20, 50),
+        "ph": (6.0, 8.0),
+        "temp": (25, 42),
+        "humidity": (40, 80),
+        "rainfall": (60, 150),
+        "seasons": ["Kharif"],
+        "states": [
+            "Gujarat",
+            "Maharashtra",
+            "Andhra Pradesh",
+            "Telangana",
+            "Rajasthan",
+            "Madhya Pradesh",
+            "Punjab",
+            "Haryana",
+            "Karnataka",
+        ],
+        "boost_districts": ["Guntur", "Kurnool", "Adilabad", "Nagpur"],
+        "category": "Cash Crop",
+    },
+    "Groundnut": {
+        "n": (15, 40),
+        "p": (30, 60),
+        "k": (20, 50),
+        "ph": (5.5, 7.0),
+        "temp": (25, 35),
+        "humidity": (50, 80),
+        "rainfall": (50, 120),
+        "seasons": ["Kharif", "Rabi"],
+        "states": [
+            "Andhra Pradesh",
+            "Gujarat",
+            "Tamil Nadu",
+            "Rajasthan",
+            "Karnataka",
+            "Maharashtra",
+        ],
+        "boost_districts": ["Anantapur", "Kurnool", "Chittoor", "Junagadh"],
+        "category": "Oilseed",
+    },
+    "Soybean": {
+        "n": (10, 40),
+        "p": (30, 60),
+        "k": (20, 50),
+        "ph": (5.5, 7.0),
+        "temp": (22, 32),
+        "humidity": (50, 80),
+        "rainfall": (80, 150),
+        "seasons": ["Kharif"],
+        "states": [
+            "Madhya Pradesh",
+            "Maharashtra",
+            "Rajasthan",
+            "Karnataka",
+            "Telangana",
+        ],
+        "boost_districts": ["Indore", "Ujjain", "Latur"],
+        "category": "Oilseed",
+    },
+    "Sugarcane": {
+        "n": (100, 200),
+        "p": (40, 80),
+        "k": (50, 100),
+        "ph": (6.0, 7.5),
+        "temp": (25, 40),
+        "humidity": (65, 90),
+        "rainfall": (100, 250),
+        "seasons": ["Kharif"],
+        "states": [
+            "Uttar Pradesh",
+            "Maharashtra",
+            "Karnataka",
+            "Andhra Pradesh",
+            "Tamil Nadu",
+            "Punjab",
+        ],
+        "boost_districts": ["Meerut", "Kolhapur", "Belgaum"],
+        "category": "Cash Crop",
+    },
+    "Tobacco": {
+        "n": (40, 80),
+        "p": (30, 60),
+        "k": (30, 60),
+        "ph": (5.5, 7.0),
+        "temp": (22, 35),
+        "humidity": (55, 80),
+        "rainfall": (50, 120),
+        "seasons": ["Rabi"],
+        "states": [
+            "Andhra Pradesh",
+            "Karnataka",
+            "Gujarat",
+        ],
+        "boost_districts": ["Guntur", "Prakasam", "Mysuru"],
+        "category": "Cash Crop",
+    },
+    "Turmeric": {
+        "n": (60, 120),
+        "p": (40, 80),
+        "k": (60, 120),
+        "ph": (5.0, 7.0),
+        "temp": (25, 35),
+        "humidity": (70, 90),
+        "rainfall": (120, 250),
+        "seasons": ["Kharif"],
+        "states": [
+            "Andhra Pradesh",
+            "Telangana",
+            "Tamil Nadu",
+            "Maharashtra",
+            "Odisha",
+        ],
+        "boost_districts": ["Guntur", "Kadapa", "Nizamabad", "Erode"],
+        "category": "Spice",
+    },
+    "Sunflower": {
+        "n": (50, 100),
+        "p": (40, 80),
+        "k": (30, 60),
+        "ph": (6.0, 7.5),
+        "temp": (20, 30),
+        "humidity": (40, 60),
+        "rainfall": (40, 80),
+        "seasons": ["Kharif", "Rabi"],
+        "states": [
+            "Karnataka",
+            "Andhra Pradesh",
+            "Maharashtra",
+            "Tamil Nadu",
+        ],
+        "boost_districts": ["Bellary", "Raichur", "Bijapur"],
+        "category": "Oilseed",
+    },
+    "Sorghum": {
+        "n": (40, 80),
+        "p": (20, 50),
+        "k": (20, 50),
+        "ph": (6.0, 8.0),
+        "temp": (25, 40),
+        "humidity": (40, 70),
+        "rainfall": (40, 100),
+        "seasons": ["Kharif", "Rabi"],
+        "states": [
+            "Maharashtra",
+            "Karnataka",
+            "Rajasthan",
+            "Andhra Pradesh",
+            "Madhya Pradesh",
+        ],
+        "boost_districts": ["Solapur", "Bijapur"],
+        "category": "Millet",
+    },
+    "Bajra": {
+        "n": (30, 60),
+        "p": (15, 40),
+        "k": (15, 40),
+        "ph": (6.0, 8.0),
+        "temp": (28, 42),
+        "humidity": (30, 60),
+        "rainfall": (20, 60),
+        "seasons": ["Kharif"],
+        "states": [
+            "Rajasthan",
+            "Gujarat",
+            "Maharashtra",
+            "Haryana",
+            "Uttar Pradesh",
+        ],
+        "boost_districts": ["Jodhpur", "Jaipur", "Bhavnagar"],
+        "category": "Millet",
+    },
+    "Pulses (Moong)": {
+        "n": (10, 30),
+        "p": (30, 60),
+        "k": (20, 40),
+        "ph": (6.0, 7.5),
+        "temp": (25, 35),
+        "humidity": (50, 80),
+        "rainfall": (40, 100),
+        "seasons": ["Kharif", "Zaid"],
+        "states": [
+            "Rajasthan",
+            "Madhya Pradesh",
+            "Andhra Pradesh",
+            "Maharashtra",
+            "Karnataka",
+        ],
+        "boost_districts": ["Jaipur", "Kurnool", "Nagpur"],
+        "category": "Pulse",
+    },
+    "Pulses (Urad)": {
+        "n": (10, 30),
+        "p": (30, 60),
+        "k": (20, 40),
+        "ph": (6.0, 7.5),
+        "temp": (25, 35),
+        "humidity": (60, 85),
+        "rainfall": (60, 120),
+        "seasons": ["Kharif"],
+        "states": [
+            "Madhya Pradesh",
+            "Uttar Pradesh",
+            "Andhra Pradesh",
+            "Rajasthan",
+        ],
+        "boost_districts": [],
+        "category": "Pulse",
+    },
+    "Chickpea": {
+        "n": (10, 30),
+        "p": (30, 60),
+        "k": (20, 50),
+        "ph": (6.0, 8.0),
+        "temp": (15, 28),
+        "humidity": (30, 60),
+        "rainfall": (30, 80),
+        "seasons": ["Rabi"],
+        "states": [
+            "Madhya Pradesh",
+            "Rajasthan",
+            "Maharashtra",
+            "Uttar Pradesh",
+            "Andhra Pradesh",
+            "Karnataka",
+        ],
+        "boost_districts": ["Indore", "Latur", "Kurnool"],
+        "category": "Pulse",
+    },
+    "Lentil": {
+        "n": (10, 30),
+        "p": (20, 50),
+        "k": (15, 40),
+        "ph": (6.0, 7.5),
+        "temp": (15, 25),
+        "humidity": (40, 65),
+        "rainfall": (25, 60),
+        "seasons": ["Rabi"],
+        "states": [
+            "Uttar Pradesh",
+            "Madhya Pradesh",
+            "Bihar",
+            "West Bengal",
+        ],
+        "boost_districts": [],
+        "category": "Pulse",
+    },
+    "Mustard": {
+        "n": (40, 80),
+        "p": (20, 50),
+        "k": (15, 40),
+        "ph": (6.0, 7.5),
+        "temp": (10, 25),
+        "humidity": (40, 70),
+        "rainfall": (30, 70),
+        "seasons": ["Rabi"],
+        "states": [
+            "Rajasthan",
+            "Uttar Pradesh",
+            "Madhya Pradesh",
+            "Haryana",
+            "Gujarat",
+        ],
+        "boost_districts": ["Bharatpur", "Alwar"],
+        "category": "Oilseed",
+    },
+    "Potato": {
+        "n": (80, 150),
+        "p": (50, 100),
+        "k": (60, 120),
+        "ph": (5.0, 6.5),
+        "temp": (15, 25),
+        "humidity": (60, 80),
+        "rainfall": (50, 120),
+        "seasons": ["Rabi"],
+        "states": [
+            "Uttar Pradesh",
+            "West Bengal",
+            "Bihar",
+            "Gujarat",
+            "Punjab",
+        ],
+        "boost_districts": ["Agra", "Hooghly"],
+        "category": "Vegetable",
+    },
+    "Onion": {
+        "n": (80, 150),
+        "p": (40, 80),
+        "k": (50, 100),
+        "ph": (6.0, 7.5),
+        "temp": (15, 30),
+        "humidity": (50, 75),
+        "rainfall": (40, 80),
+        "seasons": ["Rabi", "Kharif"],
+        "states": [
+            "Maharashtra",
+            "Karnataka",
+            "Madhya Pradesh",
+            "Andhra Pradesh",
+            "Rajasthan",
+        ],
+        "boost_districts": ["Nashik", "Indore", "Kurnool"],
+        "category": "Vegetable",
+    },
+    "Tomato": {
+        "n": (80, 150),
+        "p": (50, 100),
+        "k": (50, 100),
+        "ph": (5.5, 7.0),
+        "temp": (20, 30),
+        "humidity": (50, 80),
+        "rainfall": (50, 100),
+        "seasons": ["Kharif", "Rabi"],
+        "states": [
+            "Andhra Pradesh",
+            "Karnataka",
+            "Madhya Pradesh",
+            "Maharashtra",
+            "Tamil Nadu",
+        ],
+        "boost_districts": ["Kurnool", "Chittoor", "Madanapalle"],
+        "category": "Vegetable",
+    },
+    "Banana": {
+        "n": (120, 250),
+        "p": (30, 60),
+        "k": (100, 200),
+        "ph": (5.5, 7.0),
+        "temp": (25, 38),
+        "humidity": (70, 95),
+        "rainfall": (100, 250),
+        "seasons": ["Kharif"],
+        "states": [
+            "Tamil Nadu",
+            "Maharashtra",
+            "Gujarat",
+            "Andhra Pradesh",
+            "Karnataka",
+        ],
+        "boost_districts": ["Jalgaon", "Trichy", "Anantapur"],
+        "category": "Fruit",
+    },
+    "Coconut": {
+        "n": (50, 100),
+        "p": (20, 50),
+        "k": (80, 160),
+        "ph": (5.5, 7.0),
+        "temp": (25, 35),
+        "humidity": (70, 95),
+        "rainfall": (120, 300),
+        "seasons": ["Kharif"],
+        "states": [
+            "Kerala",
+            "Karnataka",
+            "Tamil Nadu",
+            "Andhra Pradesh",
+        ],
+        "boost_districts": ["Tumkur", "Coimbatore", "East Godavari"],
+        "category": "Plantation",
+    },
+    "Mango": {
+        "n": (50, 100),
+        "p": (25, 60),
+        "k": (40, 80),
+        "ph": (5.5, 7.5),
+        "temp": (25, 40),
+        "humidity": (50, 80),
+        "rainfall": (75, 200),
+        "seasons": ["Kharif"],
+        "states": [
+            "Andhra Pradesh",
+            "Uttar Pradesh",
+            "Karnataka",
+            "Tamil Nadu",
+            "Maharashtra",
+            "Gujarat",
+        ],
+        "boost_districts": ["Krishna", "Chittoor", "Lucknow", "Ratnagiri"],
+        "category": "Fruit",
+    },
+    "Tea": {
+        "n": (80, 150),
+        "p": (20, 50),
+        "k": (40, 80),
+        "ph": (4.5, 6.0),
+        "temp": (15, 28),
+        "humidity": (75, 95),
+        "rainfall": (150, 350),
+        "seasons": ["Kharif"],
+        "states": [
+            "Assam",
+            "West Bengal",
+            "Tamil Nadu",
+            "Kerala",
+            "Karnataka",
+        ],
+        "boost_districts": ["Jorhat", "Darjeeling", "Nilgiris"],
+        "category": "Plantation",
+    },
+    "Coffee": {
+        "n": (60, 120),
+        "p": (20, 50),
+        "k": (40, 80),
+        "ph": (5.0, 6.5),
+        "temp": (18, 28),
+        "humidity": (70, 90),
+        "rainfall": (150, 300),
+        "seasons": ["Kharif"],
+        "states": [
+            "Karnataka",
+            "Kerala",
+            "Tamil Nadu",
+        ],
+        "boost_districts": ["Chikmagalur", "Kodagu", "Wayanad"],
+        "category": "Plantation",
+    },
+    "Jute": {
+        "n": (40, 80),
+        "p": (20, 40),
+        "k": (20, 40),
+        "ph": (6.0, 7.5),
+        "temp": (25, 35),
+        "humidity": (70, 90),
+        "rainfall": (120, 250),
+        "seasons": ["Kharif"],
+        "states": [
+            "West Bengal",
+            "Bihar",
+            "Assam",
+            "Odisha",
+        ],
+        "boost_districts": ["Murshidabad", "North 24 Parganas"],
+        "category": "Fibre",
+    },
+    "Sesame": {
+        "n": (20, 50),
+        "p": (15, 40),
+        "k": (15, 40),
+        "ph": (5.5, 7.5),
+        "temp": (25, 38),
+        "humidity": (40, 70),
+        "rainfall": (30, 80),
+        "seasons": ["Kharif"],
+        "states": [
+            "Rajasthan",
+            "West Bengal",
+            "Madhya Pradesh",
+            "Gujarat",
+            "Andhra Pradesh",
+        ],
+        "boost_districts": [],
+        "category": "Oilseed",
+    },
+    "Castor": {
+        "n": (20, 50),
+        "p": (20, 50),
+        "k": (15, 40),
+        "ph": (5.5, 7.5),
+        "temp": (25, 38),
+        "humidity": (30, 60),
+        "rainfall": (30, 80),
+        "seasons": ["Kharif"],
+        "states": [
+            "Gujarat",
+            "Rajasthan",
+            "Andhra Pradesh",
+        ],
+        "boost_districts": ["Mehsana", "Banaskantha"],
+        "category": "Oilseed",
+    },
+}
 
 
-def classify_ndvi(ndvi: float | None) -> str:
-    """Classify NDVI into crop health categories."""
-    if ndvi is None:
-        return "unknown"
-    if ndvi < 0.2:
-        return "poor"
-    if ndvi < 0.4:
-        return "fair"
-    if ndvi < 0.6:
-        return "good"
-    return "excellent"
+# =====================================================================
+#  STATE / DISTRICT RESOLUTION
+# =====================================================================
+
+_DISTRICT_STATE_MAP: dict[str, str] = {
+    # Andhra Pradesh
+    "Guntur": "Andhra Pradesh",
+    "Krishna": "Andhra Pradesh",
+    "East Godavari": "Andhra Pradesh",
+    "West Godavari": "Andhra Pradesh",
+    "Prakasam": "Andhra Pradesh",
+    "Nellore": "Andhra Pradesh",
+    "Kurnool": "Andhra Pradesh",
+    "Anantapur": "Andhra Pradesh",
+    "Chittoor": "Andhra Pradesh",
+    "Kadapa": "Andhra Pradesh",
+    "Madanapalle": "Andhra Pradesh",
+    # Telangana
+    "Karimnagar": "Telangana",
+    "Khammam": "Telangana",
+    "Warangal": "Telangana",
+    "Nizamabad": "Telangana",
+    # Other states - key districts
+    "Ludhiana": "Punjab",
+    "Karnal": "Haryana",
+    "Meerut": "Uttar Pradesh",
+    "Agra": "Uttar Pradesh",
+    "Lucknow": "Uttar Pradesh",
+    "Indore": "Madhya Pradesh",
+    "Ujjain": "Madhya Pradesh",
+    "Jaipur": "Rajasthan",
+    "Jodhpur": "Rajasthan",
+    "Bharatpur": "Rajasthan",
+    "Alwar": "Rajasthan",
+    "Bhavnagar": "Gujarat",
+    "Junagadh": "Gujarat",
+    "Mehsana": "Gujarat",
+    "Banaskantha": "Gujarat",
+    "Nashik": "Maharashtra",
+    "Nagpur": "Maharashtra",
+    "Solapur": "Maharashtra",
+    "Latur": "Maharashtra",
+    "Kolhapur": "Maharashtra",
+    "Jalgaon": "Maharashtra",
+    "Ratnagiri": "Maharashtra",
+    "Adilabad": "Telangana",
+    "Belgaum": "Karnataka",
+    "Bellary": "Karnataka",
+    "Raichur": "Karnataka",
+    "Bijapur": "Karnataka",
+    "Mysuru": "Karnataka",
+    "Chikmagalur": "Karnataka",
+    "Kodagu": "Karnataka",
+    "Tumkur": "Karnataka",
+    "Erode": "Tamil Nadu",
+    "Coimbatore": "Tamil Nadu",
+    "Nilgiris": "Tamil Nadu",
+    "Trichy": "Tamil Nadu",
+    "Hooghly": "West Bengal",
+    "Murshidabad": "West Bengal",
+    "North 24 Parganas": "West Bengal",
+    "Darjeeling": "West Bengal",
+    "Jorhat": "Assam",
+    "Wayanad": "Kerala",
+}
 
 
-def classify_moisture(sar_vv: float | None) -> str:
-    """Classify soil moisture from SAR VV backscatter (dB scale)."""
-    if sar_vv is None:
-        return "unknown"
-    if sar_vv < -18:
-        return "dry"
-    if sar_vv < -14:
-        return "moderate"
-    if sar_vv < -10:
-        return "wet"
-    return "saturated"
+def parse_location(location: str) -> tuple[str | None, str | None]:
+    """Extract district and state from a location string.
 
-
-# ── Growth Stage Estimation ──────────────────────────────────────
-
-
-def estimate_growth_stage(
-    crop_type: str,
-    planting_date: str | None,
-    ndvi: float | None,
-) -> str:
-    """Estimate current crop growth stage from planting date or NDVI."""
-    if planting_date:
-        try:
-            planted = datetime.fromisoformat(planting_date)
-            days = (datetime.now() - planted).days
-            stages = _GROWTH_STAGES.get(crop_type, _GROWTH_STAGES["rice"])
-            current_stage = stages[0][1]
-            for day_threshold, stage_name in stages:
-                if days >= day_threshold:
-                    current_stage = stage_name
-            return current_stage
-        except (ValueError, TypeError):
-            pass
-
-    # Fallback: estimate from NDVI
-    if ndvi is not None:
-        if ndvi < 0.15:
-            return "bare_soil_or_germination"
-        if ndvi < 0.3:
-            return "early_vegetative"
-        if ndvi < 0.5:
-            return "active_growth"
-        if ndvi < 0.7:
-            return "peak_canopy"
-        return "maturity_or_senescence"
-
-    return "unknown"
-
-
-# ── Yield Estimation ─────────────────────────────────────────────
-
-
-def estimate_yield(
-    crop_type: str,
-    ndvi: float | None,
-    soil_health: float | None,
-    weather_risk: float | None,
-) -> dict[str, Any]:
-    """Estimate crop yield from available intelligence data.
-
-    Uses a multi-factor scoring model combining NDVI, soil health,
-    and weather risk to predict yield within the crop's range.
+    Supports formats:
+        "Guntur, Andhra Pradesh"
+        "Andhra Pradesh"
+        "Guntur"
     """
-    low, high = _YIELD_RANGES.get(crop_type, (2.0, 8.0))
-    mid = (low + high) / 2
+    parts = [p.strip().title() for p in location.split(",")]
 
-    # NDVI factor (0.0 - 1.0, where 1.0 = excellent)
-    ndvi_factor = min(1.0, max(0.0, (ndvi or 0.4) / 0.8))
+    district: str | None = None
+    state: str | None = None
 
-    # Soil health factor (0-100 mapped to 0-1)
-    soil_factor = min(1.0, (soil_health or 50) / 100)
+    if len(parts) >= 2:
+        district = parts[0]
+        state = parts[1]
+    elif len(parts) == 1:
+        token = parts[0]
+        # Check if it's a known district
+        if token in _DISTRICT_STATE_MAP:
+            district = token
+            state = _DISTRICT_STATE_MAP[token]
+        else:
+            state = token
 
-    # Weather risk penalty (0-100, lower is better)
-    weather_penalty = 1.0 - min(1.0, (weather_risk or 20) / 100) * 0.3
+    return district, state
 
-    combined = ndvi_factor * 0.4 + soil_factor * 0.35 + weather_penalty * 0.25
-    predicted = low + combined * (high - low)
-    predicted = round(predicted, 2)
 
-    # Confidence assessment
-    data_points = sum(1 for x in [ndvi, soil_health, weather_risk] if x is not None)
-    confidence = "high" if data_points >= 3 else ("medium" if data_points >= 2 else "low")
+# =====================================================================
+#  SCORING ENGINE
+# =====================================================================
 
-    # Trend assessment
-    historical_avg = mid
-    if predicted > historical_avg * 1.1:
-        trend = "above_average"
-    elif predicted < historical_avg * 0.9:
-        trend = "below_average"
-    else:
-        trend = "average"
 
-    return {
-        "predicted_yield": predicted,
-        "confidence": confidence,
-        "model_version": "crop-engine-v1.0",
-        "yield_trend": trend,
+def _range_score(value: float, low: float, high: float) -> float:
+    """Score a value against an ideal [low, high] range.
+
+    Returns 1.0 when within range, degrades linearly outside.
+    """
+    if low <= value <= high:
+        return 1.0
+    span = (high - low) / 2 if high != low else 1.0
+    distance = min(abs(value - low), abs(value - high))
+    penalty = distance / (span * 2)  # normalise to ~0.5 at 2x span distance
+    return max(0.0, round(1.0 - penalty, 4))
+
+
+def compute_feature_score(
+    n: float,
+    p: float,
+    k: float,
+    ph: float,
+    temp: float,
+    humidity: float,
+    rainfall: float,
+    crop: dict[str, Any],
+) -> float:
+    """Score a feature vector [N,P,K,pH,temp,humidity,rainfall] against a crop.
+
+    Weighted scoring:
+      N, P, K  -> 15% each  (total 45%)
+      pH       -> 15%
+      temp     -> 15%
+      humidity -> 10%
+      rainfall -> 15%
+    """
+    weights = {
+        "n": 0.15,
+        "p": 0.15,
+        "k": 0.15,
+        "ph": 0.15,
+        "temp": 0.15,
+        "humidity": 0.10,
+        "rainfall": 0.15,
     }
-
-
-# ── Harvest Window ───────────────────────────────────────────────
-
-
-def estimate_harvest_window(
-    crop_type: str,
-    growth_stage: str,
-    planting_date: str | None,
-) -> str:
-    """Estimate optimal harvest window."""
-    stages = _GROWTH_STAGES.get(crop_type, _GROWTH_STAGES["rice"])
-    maturity_days = stages[-1][0] if stages else 130
-
-    if planting_date:
-        try:
-            planted = datetime.fromisoformat(planting_date)
-            harvest_start = planted + timedelta(days=maturity_days - 10)
-            harvest_end = planted + timedelta(days=maturity_days + 10)
-            return f"{harvest_start.strftime('%Y-%m-%d')} to {harvest_end.strftime('%Y-%m-%d')}"
-        except (ValueError, TypeError):
-            pass
-
-    if growth_stage == "maturity":
-        return "Ready to harvest now (within 1-2 weeks)"
-    if growth_stage in ("grain_filling", "pod_filling"):
-        return "Approximately 3-5 weeks until harvest"
-    return "Harvest timing depends on planting date — monitor crop maturity"
-
-
-# ── Crop Health Score ────────────────────────────────────────────
-
-
-def compute_crop_health(ndvi: float | None, moisture: str, growth_stage: str) -> float:
-    """Compute overall crop health score (0-100)."""
-    score = 0.0
-
-    # NDVI component (50%)
-    ndvi_val = ndvi if ndvi is not None else 0.4
-    ndvi_score = min(100, max(0, ndvi_val / 0.8 * 100))
-    score += 0.50 * ndvi_score
-
-    # Moisture component (25%)
-    moisture_scores = {"dry": 30, "moderate": 90, "wet": 70, "saturated": 40, "unknown": 50}
-    score += 0.25 * moisture_scores.get(moisture, 50)
-
-    # Growth stage component (25%)
-    stage_scores = {
-        "germination": 60,
-        "seedling": 70,
-        "early_vegetative": 75,
-        "tillering": 80,
-        "vegetative": 80,
-        "active_growth": 85,
-        "flowering": 90,
-        "heading": 85,
-        "tasseling": 85,
-        "peak_canopy": 90,
-        "grain_filling": 85,
-        "pod_filling": 85,
-        "maturity": 80,
-        "maturity_or_senescence": 70,
-        "bare_soil_or_germination": 50,
-        "unknown": 50,
+    values = {
+        "n": (n, crop["n"]),
+        "p": (p, crop["p"]),
+        "k": (k, crop["k"]),
+        "ph": (ph, crop["ph"]),
+        "temp": (temp, crop["temp"]),
+        "humidity": (humidity, crop["humidity"]),
+        "rainfall": (rainfall, crop["rainfall"]),
     }
-    score += 0.25 * stage_scores.get(growth_stage, 50)
-
-    return round(score, 1)
-
-
-# ── Recommendations ──────────────────────────────────────────────
+    total = 0.0
+    for key, (val, rng) in values.items():
+        total += weights[key] * _range_score(val, rng[0], rng[1])
+    return round(total * 100, 2)
 
 
-def generate_crop_recommendations(
-    ndvi_class: str,
-    moisture: str,
-    growth_stage: str,
-    crop_type: str,
+def filter_by_region(
+    district: str | None,
+    state: str | None,
+) -> dict[str, dict[str, Any]]:
+    """Filter CROP_DB to crops suitable for the given region."""
+    if not state:
+        return dict(CROP_DB)
+
+    eligible: dict[str, dict[str, Any]] = {}
+    for name, info in CROP_DB.items():
+        if state in info["states"]:
+            eligible[name] = info
+    # If nothing matched, fall back to full DB
+    return eligible if eligible else dict(CROP_DB)
+
+
+def filter_by_season(
+    crops: dict[str, dict[str, Any]],
+    season: str | None,
+) -> dict[str, dict[str, Any]]:
+    """Filter crops by agricultural season."""
+    if not season:
+        return crops
+    filtered = {name: info for name, info in crops.items() if season in info["seasons"]}
+    return filtered if filtered else crops
+
+
+def apply_region_boost(
+    scores: dict[str, float],
+    district: str | None,
+) -> dict[str, float]:
+    """Boost confidence for crops dominant in the given district."""
+    if not district:
+        return scores
+    boosted = dict(scores)
+    for crop_name, score in boosted.items():
+        info = CROP_DB.get(crop_name, {})
+        if district in info.get("boost_districts", []):
+            boosted[crop_name] = min(100.0, round(score * 1.12, 2))
+    return boosted
+
+
+# =====================================================================
+#  REASONING GENERATOR
+# =====================================================================
+
+
+def generate_reasoning(
+    crop_name: str,
+    score: float,
+    n: float,
+    p: float,
+    k: float,
+    ph: float,
+    temp: float,
+    humidity: float,
+    rainfall: float,
+    district: str | None,
+    state: str | None,
+    season: str | None,
 ) -> list[str]:
-    """Generate crop management recommendations."""
-    recs: list[str] = []
+    """Generate human-readable reasoning for why a crop was recommended."""
+    info = CROP_DB.get(crop_name, {})
+    reasons: list[str] = []
 
-    if ndvi_class == "poor":
-        recs.append(
-            f"Low vegetation health detected — inspect {crop_type} for stress or pest damage"
-        )
-    elif ndvi_class == "fair":
-        recs.append("Moderate vegetation health — consider foliar nutrient spray")
+    # Region match
+    if district and district in info.get("boost_districts", []):
+        reasons.append(f"Highly suitable for {district} region")
+    elif state and state in info.get("states", []):
+        reasons.append(f"Well-suited for {state}")
 
-    if moisture == "dry":
-        recs.append("Soil moisture is low — irrigate promptly")
-    elif moisture == "saturated":
-        recs.append("Excess moisture detected — improve drainage to prevent root rot")
+    # Rainfall match
+    rng = info.get("rainfall", (0, 9999))
+    if rng[0] <= rainfall <= rng[1]:
+        reasons.append("Matches current rainfall pattern")
+    elif rainfall < rng[0]:
+        reasons.append("Rainfall is below ideal - irrigation may be needed")
 
-    if growth_stage in ("flowering", "tasseling", "heading"):
-        recs.append(f"Critical {growth_stage} stage — ensure adequate water and nutrient supply")
-    elif growth_stage in ("maturity", "maturity_or_senescence"):
-        recs.append("Crop approaching maturity — plan harvest logistics")
+    # Nutrient suitability
+    n_ok = info.get("n", (0, 999))[0] <= n <= info.get("n", (0, 999))[1]
+    p_ok = info.get("p", (0, 999))[0] <= p <= info.get("p", (0, 999))[1]
+    k_ok = info.get("k", (0, 999))[0] <= k <= info.get("k", (0, 999))[1]
+    good_count = sum([n_ok, p_ok, k_ok])
+    if good_count == 3:
+        reasons.append("Soil nutrients (N, P, K) are within ideal range")
+    elif good_count >= 2:
+        reasons.append("Most soil nutrients support this crop's growth")
+    else:
+        reasons.append("Soil nutrient adjustment may improve yield")
 
-    if not recs:
-        recs.append(f"{crop_type.title()} is growing well. Continue current management practices")
+    # pH match
+    ph_rng = info.get("ph", (0, 14))
+    if ph_rng[0] <= ph <= ph_rng[1]:
+        reasons.append("Soil pH is within optimal range")
 
-    return recs
+    # Temperature match
+    temp_rng = info.get("temp", (0, 50))
+    if temp_rng[0] <= temp <= temp_rng[1]:
+        reasons.append("Temperature conditions are favorable")
+
+    # Season match
+    if season and season in info.get("seasons", []):
+        reasons.append(f"Suitable for {season} season cultivation")
+
+    # High confidence note
+    if score >= 85:
+        reasons.append("Overall growing conditions are excellent for this crop")
+    elif score >= 70:
+        reasons.append("Growing conditions are good with minor adjustments possible")
+
+    # Category
+    cat = info.get("category", "")
+    if cat:
+        reasons.append(f"Category: {cat}")
+
+    return reasons
 
 
-# ── Main Entry Point ─────────────────────────────────────────────
+def classify_confidence(score: float) -> str:
+    """Map numeric confidence to a label."""
+    if score >= 85:
+        return "Very High"
+    if score >= 70:
+        return "High"
+    if score >= 50:
+        return "Medium"
+    return "Low"
 
 
-async def analyze_crop(
-    lat: float,
-    lon: float,
-    bounds: list[float],
-    crop_type: str = "rice",
-    planting_date: str | None = None,
-    soil_health_index: float | None = None,
-    weather_risk_score: float | None = None,
+def _suitability_note(crop_name: str, score: float) -> str:
+    """Generate a one-line suitability note for an alternative crop."""
+    info = CROP_DB.get(crop_name, {})
+    cat = info.get("category", "Crop")
+    if score >= 80:
+        return f"Excellent match - {cat}"
+    if score >= 65:
+        return f"Good alternative - {cat}"
+    if score >= 50:
+        return f"Moderate fit - {cat}"
+    return f"Possible with adjustments - {cat}"
+
+
+# =====================================================================
+#  MAIN ENTRY POINT
+# =====================================================================
+
+
+def recommend_crops(
+    nitrogen: float,
+    phosphorus: float,
+    potassium: float,
+    ph: float,
+    temperature: float,
+    humidity: float,
+    rainfall: float,
+    location: str = "India",
+    season: str | None = None,
+    soil_health: str = "Medium",
 ) -> dict[str, Any]:
-    """Full crop analysis — vegetation, yield, growth stage, and recommendations.
+    """Full crop recommendation — classification + ranking.
+
+    This is a **synchronous** function — no I/O calls.
 
     Args:
-        lat: Latitude (WGS84).
-        lon: Longitude (WGS84).
-        bounds: [minx, miny, maxx, maxy] bounding box.
-        crop_type: Crop type (rice/wheat/maize/soybean).
-        planting_date: ISO format planting date, if known.
-        soil_health_index: From Soil Engine (0-100), if available.
-        weather_risk_score: From Weather Engine (0-100), if available.
+        nitrogen:     N level (kg/ha)
+        phosphorus:   P level (kg/ha)
+        potassium:    K level (kg/ha)
+        ph:           Soil pH
+        temperature:  Temperature (C)
+        humidity:     Relative humidity (%)
+        rainfall:     Rainfall (mm)
+        location:     "District, State" or "State"
+        season:       Kharif / Rabi / Zaid (optional)
+        soil_health:  Soil health label (from Soil Engine)
 
     Returns:
-        Complete crop intelligence dict.
+        Complete crop recommendation dict.
     """
-    # Build cache key from bounds (convert dict to numeric tuple)
-    if isinstance(bounds, dict):
-        bounds_tuple = (bounds["west"], bounds["south"], bounds["east"], bounds["north"])
-    else:
-        bounds_tuple = tuple(bounds)
-    cache_key = make_bounds_cache_key("crop_engine", bounds_tuple)
-    cached = await get_cache(cache_key)
-    if cached is not None:
-        logger.debug("Crop Engine cache HIT")
-        return cached
+    logger.debug(
+        "Crop Engine: N={}, P={}, K={}, pH={}, T={}, H={}, R={}, loc={}, season={}",
+        nitrogen,
+        phosphorus,
+        potassium,
+        ph,
+        temperature,
+        humidity,
+        rainfall,
+        location,
+        season,
+    )
 
-    # Simulated NDVI/SAR (uses real Sentinel Hub when credentials configured)
-    ndvi_mean = _simulate_ndvi(lat, lon)
-    sar_vv = _simulate_sar(lat, lon)
+    district, state = parse_location(location)
 
-    ndvi_class = classify_ndvi(ndvi_mean)
-    moisture = classify_moisture(sar_vv)
-    growth_stage = estimate_growth_stage(crop_type, planting_date, ndvi_mean)
+    # Step 1: Region filter
+    region_crops = filter_by_region(district, state)
 
-    yield_data = estimate_yield(crop_type, ndvi_mean, soil_health_index, weather_risk_score)
-    harvest_window = estimate_harvest_window(crop_type, growth_stage, planting_date)
-    health_score = compute_crop_health(ndvi_mean, moisture, growth_stage)
-    recs = generate_crop_recommendations(ndvi_class, moisture, growth_stage, crop_type)
+    # Step 2: Season filter
+    seasonal_crops = filter_by_season(region_crops, season)
 
-    result = {
-        "vegetation": {
-            "ndvi_mean": ndvi_mean,
-            "ndvi_classification": ndvi_class,
-            "moisture_status": moisture,
-            "growth_stage": growth_stage,
-        },
-        "yield_forecast": yield_data,
-        "optimal_harvest_window": harvest_window,
-        "crop_health_score": health_score,
-        "recommendations": recs,
+    # Step 3: Score all candidates
+    raw_scores: dict[str, float] = {}
+    for crop_name, crop_info in seasonal_crops.items():
+        raw_scores[crop_name] = compute_feature_score(
+            nitrogen,
+            phosphorus,
+            potassium,
+            ph,
+            temperature,
+            humidity,
+            rainfall,
+            crop_info,
+        )
+
+    # Step 4: Region boost
+    boosted_scores = apply_region_boost(raw_scores, district)
+
+    # Sort by score descending
+    ranked = sorted(boosted_scores.items(), key=lambda x: x[1], reverse=True)
+
+    if not ranked:
+        return {
+            "recommended_crop": "No suitable crop found",
+            "confidence": 0.0,
+            "confidence_level": "Low",
+            "top_alternatives": [],
+            "reasoning": ["No crops matched the given conditions"],
+            "season": season or "All",
+            "location": location,
+            "feature_vector": [
+                nitrogen,
+                phosphorus,
+                potassium,
+                ph,
+                temperature,
+                humidity,
+                rainfall,
+            ],
+            "crop_health_score": 25.0,
+        }
+
+    best_name, best_score = ranked[0]
+
+    # Alternatives (next 2-4 crops, excluding the best)
+    alternatives = []
+    for name, score in ranked[1:5]:
+        alternatives.append(
+            {
+                "crop": name,
+                "confidence": score,
+                "suitability": _suitability_note(name, score),
+            }
+        )
+
+    reasoning = generate_reasoning(
+        best_name,
+        best_score,
+        nitrogen,
+        phosphorus,
+        potassium,
+        ph,
+        temperature,
+        humidity,
+        rainfall,
+        district,
+        state,
+        season,
+    )
+
+    return {
+        "recommended_crop": best_name,
+        "confidence": best_score,
+        "confidence_level": classify_confidence(best_score),
+        "top_alternatives": alternatives,
+        "reasoning": reasoning,
+        "season": season or "All",
+        "location": location,
+        "feature_vector": [
+            nitrogen,
+            phosphorus,
+            potassium,
+            ph,
+            temperature,
+            humidity,
+            rainfall,
+        ],
+        # Advisory engine backward compat: map confidence to crop_health_score
+        "crop_health_score": min(100.0, round(best_score * 0.85 + 15, 1)),
     }
-
-    await set_cache(cache_key, result, ttl=NDVI_TTL)
-    return result
-
-
-def _simulate_ndvi(lat: float, lon: float) -> float:
-    """Generate a realistic NDVI value from coordinates (deterministic)."""
-    base = 0.45 + 0.15 * math.sin(lat * 0.1) + 0.10 * math.cos(lon * 0.1)
-    return round(min(0.95, max(0.05, base)), 3)
-
-
-def _simulate_sar(lat: float, lon: float) -> float:
-    """Generate a realistic SAR VV backscatter (dB) from coordinates."""
-    base = -14.0 + 2.0 * math.sin(lat * 0.2) - 1.5 * math.cos(lon * 0.15)
-    return round(base, 2)

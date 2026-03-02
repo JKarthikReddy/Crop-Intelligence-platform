@@ -14,7 +14,7 @@ from typing import Any
 
 from loguru import logger
 
-from app.engines.crop.service import analyze_crop
+from app.engines.crop.service import recommend_crops
 from app.engines.disease.service import assess_disease_risk
 from app.engines.fertilizer.service import recommend_fertilizer
 from app.engines.market.service import analyze_market
@@ -276,7 +276,7 @@ async def generate_advisory(
         }
 
     # ── Launch all 6 engines in parallel ─────────────────────────
-    # Soil engine is synchronous — wrap in a coroutine for gather()
+    # Soil + Crop engines are synchronous — wrap in coroutines for gather()
     async def _soil_coro() -> dict[str, Any]:
         return analyze_soil(
             nitrogen=50.0,
@@ -286,19 +286,23 @@ async def generate_advisory(
             soil_type="Loamy",
         )
 
+    async def _crop_coro() -> dict[str, Any]:
+        return recommend_crops(
+            nitrogen=50.0,
+            phosphorus=35.0,
+            potassium=45.0,
+            ph=6.5,
+            temperature=30.0,
+            humidity=65.0,
+            rainfall=100.0,
+            location="India",
+            season=None,
+        )
+
     results = await asyncio.gather(
         _run_engine("Soil", _soil_coro()),
         _run_engine("Weather", analyze_weather(lat=lat, lon=lon)),
-        _run_engine(
-            "Crop",
-            analyze_crop(
-                lat=lat,
-                lon=lon,
-                bounds=bounds,
-                crop_type=crop_type,
-                planting_date=planting_date,
-            ),
-        ),
+        _run_engine("Crop", _crop_coro()),
         _run_engine(
             "Fertilizer",
             recommend_fertilizer(
@@ -362,17 +366,15 @@ async def generate_advisory(
         except Exception:
             pass  # Keep original fertilizer result
 
-    # If weather + crop available, re-run disease with actual values
+    # If weather available, re-run disease with actual values
     if (weather_data or crop_data) and disease_data:
         try:
             climate = weather_data.get("climate", {}) if weather_data else {}
-            veg = crop_data.get("vegetation_health", {}) if crop_data else {}
             disease_data = await assess_disease_risk(
                 crop_type=crop_type,
                 avg_temperature=climate.get("temperature_mean"),
                 avg_humidity=climate.get("humidity_mean"),
                 recent_rainfall_mm=climate.get("precipitation_total"),
-                ndvi_mean=veg.get("ndvi_mean"),
                 soil_ph=soil_data.get("ph") if soil_data else None,
             )
             engine_map["Disease"] = disease_data

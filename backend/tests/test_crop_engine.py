@@ -1,129 +1,420 @@
-"""Tests for Crop Engine service."""
-
-import pytest
+"""Tests for Crop Recommendation Engine."""
 
 from app.engines.crop.service import (
-    analyze_crop,
-    classify_moisture,
-    classify_ndvi,
-    compute_crop_health,
-    estimate_growth_stage,
-    estimate_yield,
-    generate_crop_recommendations,
+    CROP_DB,
+    _range_score,
+    _suitability_note,
+    apply_region_boost,
+    classify_confidence,
+    compute_feature_score,
+    filter_by_region,
+    filter_by_season,
+    generate_reasoning,
+    parse_location,
+    recommend_crops,
 )
 
+# ── Location Parsing ────────────────────────────────────────────
 
-class TestClassifyNDVI:
-    """NDVI classification tests."""
 
-    def test_poor(self) -> None:
-        assert classify_ndvi(0.1) == "poor"
+class TestParseLocation:
+    """Location string parsing."""
 
-    def test_fair(self) -> None:
-        assert classify_ndvi(0.35) == "fair"
+    def test_district_and_state(self) -> None:
+        d, s = parse_location("Guntur, Andhra Pradesh")
+        assert d == "Guntur"
+        assert s == "Andhra Pradesh"
 
-    def test_good(self) -> None:
-        assert classify_ndvi(0.55) == "good"
+    def test_state_only(self) -> None:
+        d, s = parse_location("Punjab")
+        assert d is None
+        assert s == "Punjab"
+
+    def test_known_district_only(self) -> None:
+        d, s = parse_location("Guntur")
+        assert d == "Guntur"
+        assert s == "Andhra Pradesh"
+
+    def test_unknown_location_becomes_state(self) -> None:
+        d, s = parse_location("Some Place")
+        assert d is None
+        assert s == "Some Place"
+
+    def test_title_case_normalization(self) -> None:
+        d, s = parse_location("guntur, andhra pradesh")
+        assert d == "Guntur"
+        assert s == "Andhra Pradesh"
+
+
+# ── Range Scoring ───────────────────────────────────────────────
+
+
+class TestRangeScore:
+    """Range-based value scoring."""
+
+    def test_within_range_scores_one(self) -> None:
+        assert _range_score(50, 40, 60) == 1.0
+
+    def test_at_boundary_scores_one(self) -> None:
+        assert _range_score(40, 40, 60) == 1.0
+        assert _range_score(60, 40, 60) == 1.0
+
+    def test_outside_range_degrades(self) -> None:
+        score = _range_score(70, 40, 60)
+        assert 0.0 < score < 1.0
+
+    def test_far_outside_approaches_zero(self) -> None:
+        score = _range_score(200, 40, 60)
+        assert score == 0.0
+
+
+# ── Feature Scoring ─────────────────────────────────────────────
+
+
+class TestFeatureScore:
+    """Feature vector scoring."""
+
+    def test_perfect_match_near_hundred(self) -> None:
+        rice = CROP_DB["Rice"]
+        score = compute_feature_score(
+            n=90,
+            p=45,
+            k=45,
+            ph=6.2,
+            temp=28,
+            humidity=80,
+            rainfall=200,
+            crop=rice,
+        )
+        assert score == 100.0
+
+    def test_poor_match_below_fifty(self) -> None:
+        rice = CROP_DB["Rice"]
+        score = compute_feature_score(
+            n=300,
+            p=150,
+            k=300,
+            ph=3.0,
+            temp=5,
+            humidity=10,
+            rainfall=5,
+            crop=rice,
+        )
+        assert score < 50
+
+    def test_returns_float(self) -> None:
+        crop = CROP_DB["Wheat"]
+        score = compute_feature_score(
+            n=100,
+            p=50,
+            k=40,
+            ph=6.5,
+            temp=18,
+            humidity=55,
+            rainfall=70,
+            crop=crop,
+        )
+        assert isinstance(score, float)
+
+
+# ── Region Filtering ────────────────────────────────────────────
+
+
+class TestRegionFilter:
+    """Region-based crop filtering."""
+
+    def test_ap_returns_subset(self) -> None:
+        crops = filter_by_region(None, "Andhra Pradesh")
+        assert "Rice" in crops
+        assert "Red Chilli" in crops
+        # Tea not grown in AP
+        assert "Tea" not in crops
+
+    def test_no_state_returns_all(self) -> None:
+        crops = filter_by_region(None, None)
+        assert len(crops) == len(CROP_DB)
+
+    def test_unknown_state_falls_back_to_all(self) -> None:
+        crops = filter_by_region(None, "Narnia")
+        assert len(crops) == len(CROP_DB)
+
+
+# ── Season Filtering ────────────────────────────────────────────
+
+
+class TestSeasonFilter:
+    """Season-based crop filtering."""
+
+    def test_kharif_filter(self) -> None:
+        crops = filter_by_season(CROP_DB, "Kharif")
+        assert "Red Chilli" in crops
+        # Pure Rabi crops excluded
+        assert "Wheat" not in crops
+
+    def test_rabi_filter(self) -> None:
+        crops = filter_by_season(CROP_DB, "Rabi")
+        assert "Wheat" in crops
+        assert "Cotton" not in crops  # Cotton is Kharif only
+
+    def test_no_season_returns_all(self) -> None:
+        crops = filter_by_season(CROP_DB, None)
+        assert len(crops) == len(CROP_DB)
+
+
+# ── Region Boost ────────────────────────────────────────────────
+
+
+class TestRegionBoost:
+    """District-level confidence boosting."""
+
+    def test_guntur_boosts_red_chilli(self) -> None:
+        scores = {"Red Chilli": 80.0, "Rice": 75.0}
+        boosted = apply_region_boost(scores, "Guntur")
+        assert boosted["Red Chilli"] > 80.0
+        assert boosted["Rice"] > 75.0  # Rice also boosted in Guntur
+
+    def test_no_district_no_change(self) -> None:
+        scores = {"Red Chilli": 80.0}
+        boosted = apply_region_boost(scores, None)
+        assert boosted["Red Chilli"] == 80.0
+
+    def test_unrelated_district_no_boost(self) -> None:
+        scores = {"Tea": 70.0}
+        boosted = apply_region_boost(scores, "Guntur")
+        assert boosted["Tea"] == 70.0  # Tea not boosted in Guntur
+
+
+# ── Confidence Classification ───────────────────────────────────
+
+
+class TestConfidenceClassification:
+    """Confidence band labelling."""
+
+    def test_very_high(self) -> None:
+        assert classify_confidence(90) == "Very High"
+
+    def test_high(self) -> None:
+        assert classify_confidence(75) == "High"
+
+    def test_medium(self) -> None:
+        assert classify_confidence(55) == "Medium"
+
+    def test_low(self) -> None:
+        assert classify_confidence(30) == "Low"
+
+
+# ── Suitability Notes ──────────────────────────────────────────
+
+
+class TestSuitabilityNote:
+    """Suitability note generation."""
 
     def test_excellent(self) -> None:
-        assert classify_ndvi(0.8) == "excellent"
+        assert "Excellent" in _suitability_note("Rice", 85)
 
-    def test_none(self) -> None:
-        assert classify_ndvi(None) == "unknown"
-
-
-class TestClassifyMoisture:
-    """SAR moisture classification tests."""
-
-    def test_dry(self) -> None:
-        assert classify_moisture(-20.0) == "dry"
+    def test_good(self) -> None:
+        assert "Good" in _suitability_note("Wheat", 70)
 
     def test_moderate(self) -> None:
-        assert classify_moisture(-16.0) == "moderate"
+        assert "Moderate" in _suitability_note("Maize", 55)
 
-    def test_wet(self) -> None:
-        assert classify_moisture(-12.0) == "wet"
-
-    def test_saturated(self) -> None:
-        assert classify_moisture(-5.0) == "saturated"
-
-    def test_none(self) -> None:
-        assert classify_moisture(None) == "unknown"
+    def test_possible(self) -> None:
+        assert "Possible" in _suitability_note("Tea", 30)
 
 
-class TestGrowthStage:
-    """Growth stage estimation tests."""
-
-    def test_from_ndvi_high(self) -> None:
-        stage = estimate_growth_stage(crop_type="rice", planting_date=None, ndvi=0.75)
-        assert stage == "maturity_or_senescence"
-
-    def test_from_ndvi_low(self) -> None:
-        stage = estimate_growth_stage(crop_type="rice", planting_date=None, ndvi=0.1)
-        assert stage == "bare_soil_or_germination"
-
-    def test_from_planting_date(self) -> None:
-        stage = estimate_growth_stage(crop_type="rice", planting_date="2025-01-01", ndvi=0.5)
-        assert isinstance(stage, str)
-
-    def test_unknown_when_no_data(self) -> None:
-        stage = estimate_growth_stage(crop_type="rice", planting_date=None, ndvi=None)
-        assert stage == "unknown"
+# ── Reasoning ───────────────────────────────────────────────────
 
 
-class TestYieldEstimate:
-    """Yield estimation tests."""
-
-    def test_returns_dict(self) -> None:
-        y = estimate_yield(crop_type="rice", ndvi=0.6, soil_health=70, weather_risk=20)
-        assert "predicted_yield" in y
-        assert "confidence" in y
-        assert y["predicted_yield"] > 0
-
-    def test_high_confidence_with_all_data(self) -> None:
-        y = estimate_yield(crop_type="rice", ndvi=0.7, soil_health=80, weather_risk=15)
-        assert y["confidence"] == "high"
-
-    def test_low_inputs_lower_yield(self) -> None:
-        y_low = estimate_yield(crop_type="rice", ndvi=0.2, soil_health=30, weather_risk=80)
-        y_high = estimate_yield(crop_type="rice", ndvi=0.8, soil_health=80, weather_risk=10)
-        assert y_low["predicted_yield"] < y_high["predicted_yield"]
-
-
-class TestCropHealth:
-    """Crop health score tests."""
-
-    def test_health_score_range(self) -> None:
-        score = compute_crop_health(ndvi=0.6, moisture="moderate", growth_stage="tillering")
-        assert 0 <= score <= 100
-
-    def test_dry_lowers_score(self) -> None:
-        score_dry = compute_crop_health(ndvi=0.5, moisture="dry", growth_stage="tillering")
-        score_mod = compute_crop_health(ndvi=0.5, moisture="moderate", growth_stage="tillering")
-        assert score_dry < score_mod
-
-
-class TestCropRecommendations:
-    """Crop recommendation tests."""
+class TestReasoning:
+    """Reasoning message generation."""
 
     def test_returns_list(self) -> None:
-        recs = generate_crop_recommendations("poor", "dry", "rice", "vegetative")
-        assert isinstance(recs, list)
-        assert len(recs) > 0
+        reasons = generate_reasoning(
+            "Rice",
+            85.0,
+            90,
+            45,
+            45,
+            6.2,
+            28,
+            80,
+            200,
+            "Guntur",
+            "Andhra Pradesh",
+            "Kharif",
+        )
+        assert isinstance(reasons, list)
+        assert len(reasons) > 0
+
+    def test_includes_region_note(self) -> None:
+        reasons = generate_reasoning(
+            "Red Chilli",
+            80.0,
+            70,
+            50,
+            60,
+            6.5,
+            30,
+            65,
+            100,
+            "Guntur",
+            "Andhra Pradesh",
+            "Kharif",
+        )
+        assert any("Guntur" in r for r in reasons)
+
+    def test_includes_season_note(self) -> None:
+        reasons = generate_reasoning(
+            "Rice",
+            80.0,
+            90,
+            45,
+            45,
+            6.2,
+            28,
+            80,
+            200,
+            None,
+            "Andhra Pradesh",
+            "Kharif",
+        )
+        assert any("Kharif" in r for r in reasons)
 
 
-@pytest.mark.asyncio
-async def test_analyze_crop_returns_expected_keys() -> None:
-    """End-to-end crop analysis test."""
-    bounds = {"north": 17.4, "south": 17.37, "east": 78.5, "west": 78.47}
-    result = await analyze_crop(
-        lat=17.385,
-        lon=78.487,
-        bounds=bounds,
-        crop_type="rice",
-        planting_date=None,
-    )
-    assert "vegetation" in result
-    assert "yield_forecast" in result
-    assert "crop_health_score" in result
-    assert "recommendations" in result
+# ── Full Recommendation ────────────────────────────────────────
+
+
+class TestRecommendCrops:
+    """End-to-end recommendation tests."""
+
+    def test_returns_expected_keys(self) -> None:
+        result = recommend_crops(
+            nitrogen=45,
+            phosphorus=30,
+            potassium=40,
+            ph=6.5,
+            temperature=32,
+            humidity=75,
+            rainfall=120,
+            location="Guntur, Andhra Pradesh",
+            season="Kharif",
+        )
+        assert "recommended_crop" in result
+        assert "confidence" in result
+        assert "confidence_level" in result
+        assert "top_alternatives" in result
+        assert "reasoning" in result
+        assert "feature_vector" in result
+        assert "crop_health_score" in result
+
+    def test_confidence_in_range(self) -> None:
+        result = recommend_crops(
+            nitrogen=90,
+            phosphorus=45,
+            potassium=45,
+            ph=6.2,
+            temperature=28,
+            humidity=80,
+            rainfall=200,
+            location="Andhra Pradesh",
+        )
+        assert 0 <= result["confidence"] <= 100
+
+    def test_alternatives_are_list(self) -> None:
+        result = recommend_crops(
+            nitrogen=100,
+            phosphorus=50,
+            potassium=40,
+            ph=7.0,
+            temperature=18,
+            humidity=55,
+            rainfall=70,
+            location="Punjab",
+            season="Rabi",
+        )
+        assert isinstance(result["top_alternatives"], list)
+
+    def test_feature_vector_length(self) -> None:
+        result = recommend_crops(
+            nitrogen=50,
+            phosphorus=30,
+            potassium=40,
+            ph=6.5,
+            temperature=30,
+            humidity=70,
+            rainfall=100,
+        )
+        assert len(result["feature_vector"]) == 7
+
+    def test_guntur_kharif_recommends_regional_crop(self) -> None:
+        """Guntur + Kharif should recommend chilli, rice, cotton, or similar."""
+        result = recommend_crops(
+            nitrogen=70,
+            phosphorus=55,
+            potassium=60,
+            ph=6.5,
+            temperature=32,
+            humidity=65,
+            rainfall=100,
+            location="Guntur, Andhra Pradesh",
+            season="Kharif",
+        )
+        ap_crops = {
+            "Red Chilli",
+            "Rice",
+            "Cotton",
+            "Maize",
+            "Tobacco",
+            "Turmeric",
+            "Groundnut",
+            "Mango",
+            "Tomato",
+            "Sugarcane",
+            "Sorghum",
+            "Onion",
+            "Banana",
+            "Coconut",
+        }
+        assert result["recommended_crop"] in ap_crops
+
+    def test_punjab_rabi_recommends_wheat_family(self) -> None:
+        """Punjab + Rabi should lean toward wheat."""
+        result = recommend_crops(
+            nitrogen=120,
+            phosphorus=55,
+            potassium=40,
+            ph=6.8,
+            temperature=18,
+            humidity=55,
+            rainfall=70,
+            location="Ludhiana, Punjab",
+            season="Rabi",
+        )
+        rabi_crops = {"Wheat", "Potato", "Chickpea", "Mustard", "Lentil", "Onion"}
+        assert result["recommended_crop"] in rabi_crops
+
+    def test_health_score_backward_compat(self) -> None:
+        """crop_health_score should be in [0, 100] for advisory compat."""
+        result = recommend_crops(
+            nitrogen=50,
+            phosphorus=30,
+            potassium=40,
+            ph=6.5,
+            temperature=30,
+            humidity=70,
+            rainfall=100,
+        )
+        assert 0 <= result["crop_health_score"] <= 100
+
+    def test_empty_location_fallback(self) -> None:
+        result = recommend_crops(
+            nitrogen=50,
+            phosphorus=30,
+            potassium=40,
+            ph=6.5,
+            temperature=30,
+            humidity=70,
+            rainfall=100,
+            location="India",
+        )
+        assert result["recommended_crop"] != "No suitable crop found"

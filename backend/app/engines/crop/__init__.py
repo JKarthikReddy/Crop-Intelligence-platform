@@ -1,10 +1,10 @@
-"""Crop Engine — yield prediction, NDVI monitoring, and growth analysis.
+"""Crop Recommendation Engine — classification + ranking.
 
-Provides satellite vegetation health (NDVI/SAR), ML-based yield
-forecasting (XGBoost + LSTM ensemble), crop growth stage tracking,
-and harvest timing recommendations.
+Diagnostic engine that recommends the best crops based on soil
+conditions, weather data, and farmer location/season. Uses a
+30-crop knowledge base with region-aware scoring.
 """
 
-from app.engines.crop.service import CropEngineError, analyze_crop
+from app.engines.crop.service import CropEngineError, recommend_crops
 
-__all__ = ["CropEngineError", "analyze_crop"]
+__all__ = ["CropEngineError", "recommend_crops"]
