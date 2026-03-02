@@ -49,10 +49,16 @@ registerPage("weather", {
         btn.classList.remove("loading");
         btn.innerHTML = '<span>&#9654;</span> Run Weather Analysis';
 
+        const cw = d.current || {};
         const cl = d.climate || {};
         const fc = d.forecast || {};
         const wm = d.water_model || {};
         const ra = d.risk_assessment || {};
+
+        /* helper — convert unix timestamp to locale time string */
+        const ts = (unix) => unix ? new Date(unix * 1000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }) : 'N/A';
+        /* helper — weather icon URL */
+        const iconUrl = (code) => code ? `https://openweathermap.org/img/wn/${code}@2x.png` : '';
 
         results.innerHTML = `
           <div class="results-panel">
@@ -63,6 +69,56 @@ registerPage("weather", {
                 ra.overall_risk_score > 60 ? "red" : ra.overall_risk_score > 30 ? "amber" : "green"
               )}
             </div>
+
+            <!-- Current Weather -->
+            ${cw.temperature != null ? `
+            <div class="result-section">
+              <h3 class="mb-8">&#127774; Current Weather — ${cw.city_name || 'Unknown'}${cw.country ? ', ' + cw.country : ''}</h3>
+              <div class="card mb-24" style="background:linear-gradient(135deg,var(--ci-green-50),var(--ci-blue-50));border:1px solid var(--ci-green-200);">
+                <div class="card-body" style="display:flex;align-items:center;gap:24px;flex-wrap:wrap;">
+                  <div style="text-align:center;min-width:100px;">
+                    ${cw.weather_icon ? '<img src="' + iconUrl(cw.weather_icon) + '" alt="' + cw.weather_main + '" width="80" height="80" style="filter:drop-shadow(0 2px 4px rgba(0,0,0,0.15));">' : ''}
+                    <div style="font-weight:600;text-transform:capitalize;color:var(--ci-gray-700);">${cw.weather_description || cw.weather_main || ''}</div>
+                  </div>
+                  <div style="flex:1;min-width:200px;">
+                    <div style="font-size:2.5rem;font-weight:700;color:var(--ci-gray-900);line-height:1;">${cw.temperature.toFixed(1)}&deg;C</div>
+                    <div style="color:var(--ci-gray-500);margin-top:4px;">Feels like ${cw.feels_like.toFixed(1)}&deg;C &nbsp;|&nbsp; ${cw.temp_min.toFixed(1)}&deg; ~ ${cw.temp_max.toFixed(1)}&deg;</div>
+                  </div>
+                </div>
+                <div class="card-body" style="border-top:1px solid var(--ci-border);padding-top:12px;">
+                  <div class="stats-row">
+                    <div class="card stat-card">
+                      <div class="stat-label">Humidity</div>
+                      <div class="stat-value">${cw.humidity}%</div>
+                    </div>
+                    <div class="card stat-card">
+                      <div class="stat-label">Pressure</div>
+                      <div class="stat-value">${cw.pressure} hPa</div>
+                    </div>
+                    <div class="card stat-card">
+                      <div class="stat-label">Wind</div>
+                      <div class="stat-value">${cw.wind_speed} m/s</div>
+                      <div class="stat-sub">${cw.wind_deg}&deg;${cw.wind_gust ? ' · gust ' + cw.wind_gust + ' m/s' : ''}</div>
+                    </div>
+                    <div class="card stat-card">
+                      <div class="stat-label">Visibility</div>
+                      <div class="stat-value">${(cw.visibility / 1000).toFixed(1)} km</div>
+                    </div>
+                    <div class="card stat-card">
+                      <div class="stat-label">Clouds</div>
+                      <div class="stat-value">${cw.clouds}%</div>
+                    </div>
+                    <div class="card stat-card">
+                      <div class="stat-label">Sunrise / Sunset</div>
+                      <div class="stat-value">${ts(cw.sunrise)} / ${ts(cw.sunset)}</div>
+                    </div>
+                  </div>
+                  ${cw.rain_1h != null ? '<div style="margin-top:8px;color:var(--ci-blue-600);font-weight:500;">&#127783; Rain: ' + cw.rain_1h + ' mm/h</div>' : ''}
+                  ${cw.snow_1h != null ? '<div style="margin-top:8px;color:var(--ci-blue-400);font-weight:500;">&#10052; Snow: ' + cw.snow_1h + ' mm/h</div>' : ''}
+                </div>
+              </div>
+            </div>
+            ` : ''}
 
             <!-- Climate Snapshot -->
             <div class="result-section">

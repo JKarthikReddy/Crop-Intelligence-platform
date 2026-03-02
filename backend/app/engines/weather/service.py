@@ -25,6 +25,7 @@ from app.services.cache_service import (
 
 # ── API Endpoints ────────────────────────────────────────────────
 NASA_POWER_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
+OPENWEATHER_CURRENT_URL = "https://api.openweathermap.org/data/2.5/weather"
 OPENWEATHER_URL = "https://api.openweathermap.org/data/2.5/forecast"
 
 _NASA_PARAMS = "T2M,ALLSKY_SFC_SW_DWN,WS2M,PRECTOTCORR"
@@ -166,6 +167,74 @@ def generate_weather_recommendations(
 # ── Data Fetching ────────────────────────────────────────────────
 
 
+async def _fetch_current_weather(lat: float, lon: float) -> dict[str, Any]:
+    """Fetch real-time current weather from OpenWeather Current Weather API."""
+    cache_key = make_cache_key("current_weather", lat, lon)
+    cached = await get_cache(cache_key)
+    if cached is not None:
+        return cached
+
+    settings = get_settings()
+    params = {
+        "lat": lat,
+        "lon": lon,
+        "appid": settings.OPENWEATHER_API_KEY,
+        "units": "metric",
+    }
+
+    try:
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            response = await client.get(OPENWEATHER_CURRENT_URL, params=params)
+    except httpx.HTTPError as exc:
+        raise WeatherEngineError(f"OpenWeather current request failed: {exc}") from exc
+
+    if response.status_code != 200:
+        body = response.text
+        raise WeatherEngineError(
+            f"OpenWeather current returned HTTP {response.status_code}: {body}"
+        )
+
+    result = _parse_current_weather(response.json())
+    await set_cache(cache_key, result, ttl=600)  # 10 min TTL — current data
+    return result
+
+
+def _parse_current_weather(data: dict[str, Any]) -> dict[str, Any]:
+    """Parse OpenWeather /weather JSON into CurrentWeather dict."""
+    try:
+        main = data["main"]
+        wind = data.get("wind", {})
+        clouds = data.get("clouds", {})
+        sys_info = data.get("sys", {})
+        weather_block = data.get("weather", [{}])[0]
+
+        return {
+            "temperature": main["temp"],
+            "feels_like": main["feels_like"],
+            "temp_min": main["temp_min"],
+            "temp_max": main["temp_max"],
+            "pressure": main["pressure"],
+            "humidity": main["humidity"],
+            "visibility": data.get("visibility", 0),
+            "wind_speed": wind.get("speed", 0.0),
+            "wind_deg": wind.get("deg", 0),
+            "wind_gust": wind.get("gust"),
+            "clouds": clouds.get("all", 0),
+            "weather_main": weather_block.get("main", "Unknown"),
+            "weather_description": weather_block.get("description", ""),
+            "weather_icon": weather_block.get("icon", "01d"),
+            "rain_1h": data.get("rain", {}).get("1h"),
+            "snow_1h": data.get("snow", {}).get("1h"),
+            "sunrise": sys_info.get("sunrise", 0),
+            "sunset": sys_info.get("sunset", 0),
+            "city_name": data.get("name", "Unknown"),
+            "country": sys_info.get("country", ""),
+            "dt": data.get("dt", 0),
+        }
+    except (KeyError, TypeError, IndexError) as exc:
+        raise WeatherEngineError(f"Failed to parse current weather: {exc}") from exc
+
+
 async def _fetch_climate(lat: float, lon: float) -> dict[str, Any]:
     """Fetch 30-day climate from NASA POWER."""
     cache_key = make_cache_key("climate", lat, lon)
@@ -293,23 +362,29 @@ async def analyze_weather(lat: float, lon: float) -> dict[str, Any]:
     """
     import asyncio
 
-    climate, forecast = None, None
+    current, climate, forecast = None, None, None
 
     results = await asyncio.gather(
+        _fetch_current_weather(lat, lon),
         _fetch_climate(lat, lon),
         _fetch_forecast(lat, lon),
         return_exceptions=True,
     )
 
     if not isinstance(results[0], Exception):
-        climate = results[0]
+        current = results[0]
     else:
-        logger.warning("Climate fetch failed: {}", results[0])
+        logger.warning("Current weather fetch failed: {}", results[0])
 
     if not isinstance(results[1], Exception):
-        forecast = results[1]
+        climate = results[1]
     else:
-        logger.warning("Forecast fetch failed: {}", results[1])
+        logger.warning("Climate fetch failed: {}", results[1])
+
+    if not isinstance(results[2], Exception):
+        forecast = results[2]
+    else:
+        logger.warning("Forecast fetch failed: {}", results[2])
 
     # Water model
     water_model = None
@@ -331,6 +406,7 @@ async def analyze_weather(lat: float, lon: float) -> dict[str, Any]:
     recs = generate_weather_recommendations(climate, forecast, risks)
 
     return {
+        "current": current,
         "climate": climate,
         "forecast": forecast,
         "water_model": water_model,

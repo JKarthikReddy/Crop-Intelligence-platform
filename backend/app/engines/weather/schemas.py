@@ -10,6 +10,32 @@ class WeatherAnalysisRequest(BaseModel):
     lon: float = Field(description="Longitude in decimal degrees (WGS84)")
 
 
+class CurrentWeather(BaseModel):
+    """Real-time weather observation from OpenWeather Current Weather API."""
+
+    temperature: float = Field(description="Current temperature (°C)")
+    feels_like: float = Field(description="Perceived temperature (°C)")
+    temp_min: float = Field(description="Observed minimum temperature (°C)")
+    temp_max: float = Field(description="Observed maximum temperature (°C)")
+    pressure: int = Field(description="Atmospheric pressure at sea level (hPa)")
+    humidity: int = Field(description="Humidity (%)")
+    visibility: int = Field(description="Visibility (metres, max 10 000)")
+    wind_speed: float = Field(description="Wind speed (m/s)")
+    wind_deg: int = Field(description="Wind direction (degrees)")
+    wind_gust: float | None = Field(default=None, description="Wind gust (m/s)")
+    clouds: int = Field(description="Cloudiness (%)")
+    weather_main: str = Field(description="Weather group (Rain, Clouds, Clear …)")
+    weather_description: str = Field(description="Weather description")
+    weather_icon: str = Field(description="OpenWeather icon code")
+    rain_1h: float | None = Field(default=None, description="Rain volume last 1 h (mm)")
+    snow_1h: float | None = Field(default=None, description="Snow volume last 1 h (mm)")
+    sunrise: int = Field(description="Sunrise time (unix UTC)")
+    sunset: int = Field(description="Sunset time (unix UTC)")
+    city_name: str = Field(description="Nearest city / locality name")
+    country: str = Field(description="ISO 3166 country code")
+    dt: int = Field(description="Data calculation time (unix UTC)")
+
+
 class ClimateSnapshot(BaseModel):
     """30-day historical climate summary from NASA POWER."""
 
@@ -50,6 +76,7 @@ class WeatherRiskScore(BaseModel):
 class WeatherAnalysisResponse(BaseModel):
     """Complete weather intelligence output."""
 
+    current: CurrentWeather | None = None
     climate: ClimateSnapshot | None = None
     forecast: ForecastSummary | None = None
     water_model: WaterModel | None = None
