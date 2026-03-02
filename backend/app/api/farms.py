@@ -6,8 +6,12 @@ from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from app.db.session import get_db
+from app.engines.advisory.schemas import AdvisoryResponse
+from app.engines.advisory.service import (
+    AdvisoryEngineError,
+    generate_advisory,
+)
 from app.schemas.farm import FarmCreate, FarmListItem, FarmResponse, FarmUpdate
-from app.schemas.intelligence import IntelligenceResponse
 from app.services.farm_service import (
     create_farm,
     delete_farm,
@@ -16,10 +20,6 @@ from app.services.farm_service import (
     update_farm,
 )
 from app.services.geometry_service import GeometryValidationError
-from app.services.intelligence_engine import (
-    IntelligenceEngineError,
-    generate_intelligence,
-)
 
 router = APIRouter(prefix="/farms", tags=["farms"])
 
@@ -95,17 +95,30 @@ async def delete_farm_endpoint(farm_id: int, session: DbSession) -> None:
         raise HTTPException(status_code=404, detail=f"Farm {farm_id} not found")
 
 
-@router.post("/analyze", response_model=IntelligenceResponse, status_code=200)
-async def analyze_farm(payload: FarmCreate) -> IntelligenceResponse:
+@router.post("/analyze", response_model=AdvisoryResponse, status_code=200)
+async def analyze_farm(payload: FarmCreate) -> AdvisoryResponse:
     """Generate unified intelligence for a farm boundary.
 
     Accepts a GeoJSON farm payload, extracts spatial metadata, and
-    concurrently fetches soil, climate, forecast, and satellite data.
-    Individual service failures degrade gracefully (null sections).
+    orchestrates all 6 domain engines via the Advisory Aggregator.
+    Individual engine failures degrade gracefully (null sections).
     """
     try:
-        result = await generate_intelligence(payload.geojson)
-    except IntelligenceEngineError as exc:
+        # Extract centroid from GeoJSON for engine inputs
+        from app.services.geometry_service import extract_geometry_info
+
+        geo_info = extract_geometry_info(payload.geojson)
+        lat, lon = geo_info["centroid"]
+        minx, miny, maxx, maxy = geo_info["bounds"]
+        bounds = {"north": maxy, "south": miny, "east": maxx, "west": minx}
+
+        result = await generate_advisory(
+            lat=lat,
+            lon=lon,
+            crop_type="rice",
+            bounds=bounds,
+        )
+    except AdvisoryEngineError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return IntelligenceResponse(**result)
+    return AdvisoryResponse(**result)
