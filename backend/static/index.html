@@ -1,0 +1,138 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Crop Intelligence Platform</title>
+
+  <!-- Fonts -->
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+
+  <!-- Favicon -->
+  <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🌾</text></svg>">
+
+  <!-- Styles -->
+  <link rel="stylesheet" href="/static/css/main.css">
+</head>
+<body>
+
+<div class="app-shell">
+
+  <!-- ═══ Sidebar ═══════════════════════════════════════════════ -->
+  <aside class="sidebar" id="sidebar">
+    <div class="sidebar-brand">
+      <h2>
+        <span class="brand-icon">&#127806;</span>
+        Crop Intelligence
+      </h2>
+      <div class="brand-subtitle">Enterprise Platform v1.0</div>
+    </div>
+
+    <nav class="sidebar-nav">
+      <!-- Overview -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Overview</div>
+        <button class="sidebar-link active" data-route="dashboard">
+          <span class="link-icon">&#127968;</span>
+          Dashboard
+        </button>
+        <button class="sidebar-link" data-route="advisory">
+          <span class="link-icon">&#9881;</span>
+          Full Advisory
+          <span class="link-badge">All</span>
+        </button>
+      </div>
+
+      <!-- Engines -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">Intelligence Engines</div>
+        <button class="sidebar-link" data-route="soil">
+          <span class="link-icon">&#127793;</span>
+          Soil Engine
+        </button>
+        <button class="sidebar-link" data-route="weather">
+          <span class="link-icon">&#9925;</span>
+          Weather Engine
+        </button>
+        <button class="sidebar-link" data-route="crop">
+          <span class="link-icon">&#127806;</span>
+          Crop Engine
+        </button>
+        <button class="sidebar-link" data-route="fertilizer">
+          <span class="link-icon">&#129716;</span>
+          Fertilizer Engine
+        </button>
+        <button class="sidebar-link" data-route="disease">
+          <span class="link-icon">&#128030;</span>
+          Disease Engine
+        </button>
+        <button class="sidebar-link" data-route="market">
+          <span class="link-icon">&#128200;</span>
+          Market Engine
+        </button>
+      </div>
+
+      <!-- System -->
+      <div class="sidebar-section">
+        <div class="sidebar-section-label">System</div>
+        <a class="sidebar-link" href="/docs" target="_blank">
+          <span class="link-icon">&#128196;</span>
+          API Docs (Swagger)
+        </a>
+        <a class="sidebar-link" href="/redoc" target="_blank">
+          <span class="link-icon">&#128214;</span>
+          ReDoc
+        </a>
+      </div>
+    </nav>
+
+    <!-- Sidebar footer -->
+    <div style="padding:16px 20px;border-top:1px solid rgba(255,255,255,0.08);font-size:0.75rem;color:var(--ci-gray-500)">
+      &copy; 2026 Crop Intelligence<br>
+      Domain-Driven Engine Architecture
+    </div>
+  </aside>
+
+  <!-- ═══ Main Content ══════════════════════════════════════════ -->
+  <div class="main-content">
+
+    <!-- Top Bar -->
+    <header class="topbar">
+      <div class="topbar-breadcrumb" id="topbar-breadcrumb">
+        <span>Platform</span>
+        <span>/</span>
+        <span class="crumb-active">Dashboard</span>
+      </div>
+      <div class="topbar-right">
+        <div class="topbar-status">
+          <span class="status-dot"></span>
+          <span>API Connected</span>
+        </div>
+      </div>
+    </header>
+
+    <!-- Page Container (SPA renders here) -->
+    <div id="page-container"></div>
+
+  </div>
+</div>
+
+<!-- ═══ Scripts ════════════════════════════════════════════════ -->
+<!-- Core app (router, api client, helpers) — must load first -->
+<script src="/static/js/app.js"></script>
+
+<!-- Page modules (register themselves) -->
+<script src="/static/js/pages/dashboard.js"></script>
+<script src="/static/js/pages/soil.js"></script>
+<script src="/static/js/pages/weather.js"></script>
+<script src="/static/js/pages/crop.js"></script>
+<script src="/static/js/pages/fertilizer.js"></script>
+<script src="/static/js/pages/disease.js"></script>
+<script src="/static/js/pages/market.js"></script>
+<script src="/static/js/pages/advisory.js"></script>
+
+
+</body>
+</html>

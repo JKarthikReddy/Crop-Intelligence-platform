@@ -23,6 +23,8 @@ from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
+from fastapi.staticfiles import StaticFiles
 from loguru import logger
 
 # ── Infrastructure routers (shared) ─────────────────────────────
@@ -44,6 +46,7 @@ from app.engines.weather.router import router as weather_router
 _BACKEND_DIR = Path(__file__).resolve().parent.parent
 _ROOT_DIR = _BACKEND_DIR.parent
 _ML_DIR = _ROOT_DIR / "ml"
+_STATIC_DIR = _BACKEND_DIR / "static"
 
 
 def validate_model_artifacts() -> None:
@@ -111,6 +114,14 @@ def create_app() -> FastAPI:
     app.include_router(disease_router, prefix=_api)
     app.include_router(market_router, prefix=_api)
     app.include_router(advisory_router, prefix=_api)
+
+    # ── Static Files & SPA Root ──────────────────────────────────
+    @app.get("/", include_in_schema=False)
+    async def serve_spa():
+        """Serve the single-page application dashboard."""
+        return FileResponse(str(_STATIC_DIR / "index.html"))
+
+    app.mount("/static", StaticFiles(directory=str(_STATIC_DIR)), name="static")
 
     return app
 
