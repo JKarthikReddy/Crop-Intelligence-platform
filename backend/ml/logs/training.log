@@ -338,3 +338,331 @@ weighted avg       0.99      0.99      0.99       880
 [08:20:48] Production model saved to C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\production
 [08:20:48]
 Training pipeline complete!
+[08:26:16]
+############################################################
+[08:26:16] # CROP RECOMMENDATION TRAINING PIPELINE
+[08:26:16] # Datasets: [1]
+[08:26:16] # Max epochs: 200 | Patience: 15 | Batch: 32
+[08:26:16] # LR: 0.001 | Val split: 0.2
+[08:26:16] ############################################################
+
+[08:26:16]
+  Found checkpoint for dataset 1 (epoch 20, acc=0.9955)
+[08:26:16] ============================================================
+[08:26:16] DATASET 1: Dataset 1 — dataset1/Crop_recommendation.csv (2200 rows, 7 features)
+[08:26:16] ============================================================
+[08:26:16] Loaded 2200 rows, 7 features
+[08:26:16] Crops: ['apple', 'banana', 'blackgram', 'chickpea', 'coconut', 'coffee', 'cotton', 'grapes', 'jute', 'kidneybeans', 'lentil', 'maize', 'mango', 'mothbeans', 'mungbean', 'muskmelon', 'orange', 'papaya', 'pigeonpeas', 'pomegranate', 'rice', 'watermelon']
+[08:26:16] Class distribution:
+label
+rice           100
+maize          100
+jute           100
+cotton         100
+coconut        100
+papaya         100
+orange         100
+apple          100
+muskmelon      100
+watermelon     100
+grapes         100
+mango          100
+banana         100
+pomegranate    100
+lentil         100
+blackgram      100
+mungbean       100
+mothbeans      100
+pigeonpeas     100
+kidneybeans    100
+chickpea       100
+coffee         100
+[08:26:16] Train: 1760 samples | Val: 440 samples
+[08:26:16] Classes: 22 | Input dim: 7
+[08:26:16]   Resumed model weights from checkpoint (epoch 20)
+[08:26:16]   Resuming from epoch 21, best_acc=0.9955 @ epoch 20
+[08:26:17]   Resumed optimizer state
+[08:26:17]   Resumed scheduler state
+[08:26:17]
+Starting training: epochs 21 -> 200 (patience=15)
+[08:26:17]  Epoch | Train Loss | Train Acc | Val Loss | Val Acc |         LR | Status
+[08:26:17] --------------------------------------------------------------------------------
+[08:26:18]     21 |    0.11041 |   0.9642% |  0.02983 | 0.9886% |   2.50e-04 |
+[08:26:18]     22 |    0.11164 |   0.9631% |  0.03020 | 0.9909% |   2.50e-04 |
+[08:26:18]     23 |    0.12699 |   0.9540% |  0.03491 | 0.9864% |   2.50e-04 |
+[08:26:19]     24 |    0.10085 |   0.9670% |  0.03175 | 0.9886% |   1.25e-04 |
+[08:26:19]     25 |    0.09900 |   0.9699% |  0.02791 | 0.9909% |   1.25e-04 |
+[08:26:19]     26 |    0.11079 |   0.9614% |  0.03032 | 0.9864% |   1.25e-04 |
+[08:26:19]     27 |    0.11610 |   0.9631% |  0.03172 | 0.9886% |   1.25e-04 |
+[08:26:19]     28 |    0.11083 |   0.9636% |  0.03064 | 0.9886% |   1.25e-04 |
+[08:26:20]     29 |    0.11988 |   0.9574% |  0.02940 | 0.9886% |   1.25e-04 |
+[08:26:20]     30 |    0.11275 |   0.9614% |  0.03087 | 0.9864% |   6.25e-05 |
+[08:26:20]     31 |    0.10668 |   0.9648% |  0.02621 | 0.9909% |   6.25e-05 |
+[08:26:20]     32 |    0.10892 |   0.9688% |  0.02739 | 0.9909% |   6.25e-05 | ⚠ patience 12/15
+[08:26:21]     33 |    0.09342 |   0.9653% |  0.02997 | 0.9909% |   6.25e-05 | ⚠ patience 13/15
+[08:26:21]     34 |    0.11386 |   0.9614% |  0.03062 | 0.9864% |   6.25e-05 | ⚠ patience 14/15
+[08:26:21]     35 |    0.12663 |   0.9557% |  0.02895 | 0.9886% |   6.25e-05 | ⛔ EARLY STOP (no improvement for 15 epochs)
+[08:26:21]
+  Early stopping triggered at epoch 35
+[08:26:21]
+  Restored best model from epoch 20 (val_acc=0.9955)
+[08:26:21]
+Classification Report (Dataset 1):
+              precision    recall  f1-score   support
+
+       apple       1.00      1.00      1.00        20
+      banana       1.00      1.00      1.00        20
+   blackgram       0.95      1.00      0.98        20
+    chickpea       1.00      1.00      1.00        20
+     coconut       1.00      1.00      1.00        20
+      coffee       1.00      1.00      1.00        20
+      cotton       0.95      1.00      0.98        20
+      grapes       1.00      1.00      1.00        20
+        jute       0.87      1.00      0.93        20
+ kidneybeans       1.00      1.00      1.00        20
+      lentil       1.00      0.95      0.97        20
+       maize       1.00      0.95      0.97        20
+       mango       1.00      1.00      1.00        20
+   mothbeans       1.00      1.00      1.00        20
+    mungbean       1.00      1.00      1.00        20
+   muskmelon       1.00      1.00      1.00        20
+      orange       1.00      1.00      1.00        20
+      papaya       1.00      1.00      1.00        20
+  pigeonpeas       1.00      1.00      1.00        20
+ pomegranate       1.00      1.00      1.00        20
+        rice       1.00      0.85      0.92        20
+  watermelon       1.00      1.00      1.00        20
+
+    accuracy                           0.99       440
+   macro avg       0.99      0.99      0.99       440
+weighted avg       0.99      0.99      0.99       440
+
+[08:26:21]   Checkpoint: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\checkpoints\crop_rec_ds1.pt
+[08:26:21]   Report: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\logs\report_ds1.txt
+[08:26:21]   History: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\logs\history_ds1.json
+[08:26:21]
+============================================================
+[08:26:21] EXPORTING PRODUCTION MODEL
+[08:26:21] ============================================================
+[08:26:21] Production model saved to C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\production
+[08:26:21]
+Training pipeline complete!
+[08:26:54]
+############################################################
+[08:26:54] # CROP RECOMMENDATION TRAINING PIPELINE
+[08:26:54] # Datasets: [2]
+[08:26:54] # Max epochs: 200 | Patience: 15 | Batch: 32
+[08:26:54] # LR: 0.001 | Val split: 0.2
+[08:26:54] ############################################################
+
+[08:26:54]
+  Found checkpoint for dataset 2 (epoch 3, acc=0.9934)
+[08:26:54] ============================================================
+[08:26:54] DATASET 2: Dataset 2 — data set(2)/Crop_recommendation.csv + metadata augmentation
+[08:26:54] ============================================================
+[08:26:54] Loaded 2260 rows, 7 features
+[08:26:54] Crops: ['apple', 'banana', 'blackgram', 'chickpea', 'coconut', 'coffee', 'cotton', 'grapes', 'jute', 'kidneybeans', 'lentil', 'maize', 'mango', 'mothbeans', 'mungbean', 'muskmelon', 'orange', 'papaya', 'pigeonpeas', 'pomegranate', 'rice', 'watermelon']
+[08:26:54] Class distribution:
+label
+chickpea       110
+cotton         110
+lentil         110
+jute           110
+maize          110
+mungbean       110
+coffee         100
+coconut        100
+watermelon     100
+papaya         100
+pomegranate    100
+pigeonpeas     100
+apple          100
+mothbeans      100
+blackgram      100
+muskmelon      100
+orange         100
+grapes         100
+banana         100
+rice           100
+mango          100
+kidneybeans    100
+[08:26:54] Train: 1808 samples | Val: 452 samples
+[08:26:54] Classes: 22 | Input dim: 7
+[08:26:54]   Resumed model weights from checkpoint (epoch 3)
+[08:26:54]   Resuming from epoch 4, best_acc=0.9934 @ epoch 3
+[08:26:55]   Resumed optimizer state
+[08:26:55]   Resumed scheduler state
+[08:26:55]
+Starting training: epochs 4 -> 200 (patience=15)
+[08:26:55]  Epoch | Train Loss | Train Acc | Val Loss | Val Acc |         LR | Status
+[08:26:55] --------------------------------------------------------------------------------
+[08:26:55]      4 |    0.08586 |   0.9707% |  0.02833 | 0.9889% |   2.50e-04 |
+[08:26:55]      5 |    0.10024 |   0.9663% |  0.03020 | 0.9779% |   2.50e-04 |
+[08:26:55]      6 |    0.09466 |   0.9646% |  0.02988 | 0.9889% |   2.50e-04 |
+[08:26:56]      7 |    0.07575 |   0.9740% |  0.03133 | 0.9801% |   1.25e-04 |
+[08:26:56]      8 |    0.08284 |   0.9735% |  0.03265 | 0.9801% |   1.25e-04 |
+[08:26:56]      9 |    0.09154 |   0.9657% |  0.02839 | 0.9867% |   1.25e-04 |
+[08:26:56]     10 |    0.08764 |   0.9718% |  0.02825 | 0.9823% |   1.25e-04 |
+[08:26:57]     11 |    0.09218 |   0.9679% |  0.02883 | 0.9867% |   1.25e-04 |
+[08:26:57]     12 |    0.09890 |   0.9635% |  0.03197 | 0.9823% |   1.25e-04 |
+[08:26:57]     13 |    0.09056 |   0.9679% |  0.02795 | 0.9845% |   6.25e-05 |
+[08:26:57]     14 |    0.08631 |   0.9696% |  0.03049 | 0.9823% |   6.25e-05 |
+[08:26:57]     15 |    0.09772 |   0.9701% |  0.02737 | 0.9867% |   6.25e-05 | ⚠ patience 12/15
+[08:26:58]     16 |    0.09057 |   0.9663% |  0.02911 | 0.9912% |   6.25e-05 | ⚠ patience 13/15
+[08:26:58]     17 |    0.09686 |   0.9679% |  0.02615 | 0.9912% |   6.25e-05 | ⚠ patience 14/15
+[08:26:58]     18 |    0.09687 |   0.9685% |  0.03026 | 0.9823% |   6.25e-05 | ⛔ EARLY STOP (no improvement for 15 epochs)
+[08:26:58]
+  Early stopping triggered at epoch 18
+[08:26:58]
+  Restored best model from epoch 3 (val_acc=0.9934)
+[08:26:58]
+Classification Report (Dataset 2):
+              precision    recall  f1-score   support
+
+       apple       1.00      1.00      1.00        20
+      banana       1.00      1.00      1.00        20
+   blackgram       0.95      1.00      0.98        20
+    chickpea       1.00      1.00      1.00        22
+     coconut       1.00      1.00      1.00        20
+      coffee       0.95      1.00      0.98        20
+      cotton       1.00      1.00      1.00        22
+      grapes       1.00      1.00      1.00        20
+        jute       0.90      0.82      0.86        22
+ kidneybeans       1.00      1.00      1.00        20
+      lentil       0.95      0.95      0.95        22
+       maize       1.00      1.00      1.00        22
+       mango       1.00      1.00      1.00        20
+   mothbeans       1.00      0.95      0.97        20
+    mungbean       1.00      1.00      1.00        22
+   muskmelon       1.00      1.00      1.00        20
+      orange       1.00      1.00      1.00        20
+      papaya       1.00      0.95      0.97        20
+  pigeonpeas       1.00      1.00      1.00        20
+ pomegranate       1.00      1.00      1.00        20
+        rice       0.86      0.95      0.90        20
+  watermelon       1.00      1.00      1.00        20
+
+    accuracy                           0.98       452
+   macro avg       0.98      0.98      0.98       452
+weighted avg       0.98      0.98      0.98       452
+
+[08:26:58]   Checkpoint: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\checkpoints\crop_rec_ds2.pt
+[08:26:58]   Report: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\logs\report_ds2.txt
+[08:26:58]   History: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\logs\history_ds2.json
+[08:26:58]
+============================================================
+[08:26:58] EXPORTING PRODUCTION MODEL
+[08:26:58] ============================================================
+[08:26:58] Production model saved to C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\production
+[08:26:58]
+Training pipeline complete!
+[08:27:19]
+############################################################
+[08:27:19] # CROP RECOMMENDATION TRAINING PIPELINE
+[08:27:19] # Datasets: [3]
+[08:27:19] # Max epochs: 200 | Patience: 15 | Batch: 32
+[08:27:19] # LR: 0.001 | Val split: 0.2
+[08:27:19] ############################################################
+
+[08:27:19]
+  Found checkpoint for dataset 3 (epoch 1, acc=0.9932)
+[08:27:19] ============================================================
+[08:27:19] DATASET 3: Dataset 3 — dataset-3/Combined (Crop_Data + Crop_recommendation, 4400 rows)
+[08:27:19] ============================================================
+[08:27:19] Loaded 4400 rows, 7 features
+[08:27:19] Crops: ['apple', 'banana', 'blackgram', 'chickpea', 'coconut', 'coffee', 'cotton', 'grapes', 'jute', 'kidneybeans', 'lentil', 'maize', 'mango', 'mothbeans', 'mungbean', 'muskmelon', 'orange', 'papaya', 'pigeonpeas', 'pomegranate', 'rice', 'watermelon']
+[08:27:19] Class distribution:
+label
+chickpea       200
+grapes         200
+watermelon     200
+pomegranate    200
+lentil         200
+rice           200
+maize          200
+mango          200
+muskmelon      200
+papaya         200
+pigeonpeas     200
+jute           200
+mothbeans      200
+orange         200
+mungbean       200
+blackgram      200
+coconut        200
+kidneybeans    200
+apple          200
+banana         200
+coffee         200
+cotton         200
+[08:27:19] Train: 3520 samples | Val: 880 samples
+[08:27:19] Classes: 22 | Input dim: 7
+[08:27:19]   Resumed model weights from checkpoint (epoch 1)
+[08:27:19]   Resuming from epoch 2, best_acc=0.9932 @ epoch 1
+[08:27:20]   Resumed optimizer state
+[08:27:20]   Resumed scheduler state
+[08:27:20]
+Starting training: epochs 2 -> 200 (patience=15)
+[08:27:20]  Epoch | Train Loss | Train Acc | Val Loss | Val Acc |         LR | Status
+[08:27:20] --------------------------------------------------------------------------------
+[08:27:21]      2 |    0.06426 |   0.9778% |  0.02053 | 0.9920% |   2.50e-04 |
+[08:27:21]      3 |    0.05702 |   0.9801% |  0.02054 | 0.9909% |   2.50e-04 |
+[08:27:22]      4 |    0.05892 |   0.9778% |  0.02082 | 0.9909% |   2.50e-04 |
+[08:27:22]      5 |    0.06074 |   0.9793% |  0.02062 | 0.9909% |   1.25e-04 |
+[08:27:22]      6 |    0.05651 |   0.9784% |  0.02315 | 0.9898% |   1.25e-04 |
+[08:27:23]      7 |    0.05755 |   0.9781% |  0.02022 | 0.9909% |   1.25e-04 |
+[08:27:23]      8 |    0.07200 |   0.9761% |  0.02035 | 0.9909% |   1.25e-04 |
+[08:27:24]      9 |    0.05524 |   0.9793% |  0.01950 | 0.9909% |   1.25e-04 |
+[08:27:24]     10 |    0.06258 |   0.9798% |  0.02103 | 0.9909% |   1.25e-04 |
+[08:27:25]     11 |    0.06454 |   0.9776% |  0.02009 | 0.9932% |   6.25e-05 |
+[08:27:25]     12 |    0.06379 |   0.9759% |  0.01967 | 0.9920% |   6.25e-05 |
+[08:27:26]     13 |    0.05836 |   0.9810% |  0.01938 | 0.9920% |   6.25e-05 | ⚠ patience 12/15
+[08:27:26]     14 |    0.05628 |   0.9795% |  0.01953 | 0.9932% |   6.25e-05 | ⚠ patience 13/15
+[08:27:26]     15 |    0.05756 |   0.9812% |  0.02027 | 0.9909% |   6.25e-05 | ⚠ patience 14/15
+[08:27:27]     16 |    0.05805 |   0.9787% |  0.01980 | 0.9920% |   6.25e-05 | ⛔ EARLY STOP (no improvement for 15 epochs)
+[08:27:27]
+  Early stopping triggered at epoch 16
+[08:27:27]
+  Restored best model from epoch 1 (val_acc=0.9932)
+[08:27:27]
+Classification Report (Dataset 3):
+              precision    recall  f1-score   support
+
+       apple       1.00      1.00      1.00        40
+      banana       1.00      1.00      1.00        40
+   blackgram       1.00      1.00      1.00        40
+    chickpea       1.00      1.00      1.00        40
+     coconut       1.00      1.00      1.00        40
+      coffee       1.00      1.00      1.00        40
+      cotton       1.00      1.00      1.00        40
+      grapes       1.00      1.00      1.00        40
+        jute       0.93      0.93      0.93        40
+ kidneybeans       0.98      1.00      0.99        40
+      lentil       1.00      1.00      1.00        40
+       maize       1.00      1.00      1.00        40
+       mango       1.00      1.00      1.00        40
+   mothbeans       1.00      1.00      1.00        40
+    mungbean       1.00      1.00      1.00        40
+   muskmelon       1.00      1.00      1.00        40
+      orange       1.00      1.00      1.00        40
+      papaya       1.00      1.00      1.00        40
+  pigeonpeas       1.00      0.97      0.99        40
+ pomegranate       1.00      1.00      1.00        40
+        rice       0.93      0.93      0.93        40
+  watermelon       1.00      1.00      1.00        40
+
+    accuracy                           0.99       880
+   macro avg       0.99      0.99      0.99       880
+weighted avg       0.99      0.99      0.99       880
+
+[08:27:27]   Checkpoint: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\checkpoints\crop_rec_ds3.pt
+[08:27:27]   Report: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\logs\report_ds3.txt
+[08:27:27]   History: C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\logs\history_ds3.json
+[08:27:27]
+============================================================
+[08:27:27] EXPORTING PRODUCTION MODEL
+[08:27:27] ============================================================
+[08:27:27] Production model saved to C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\production
+[08:27:27]
+Training pipeline complete!
+[08:27:49] Model exported to C:\Users\J.KARTHIK REDDY\Desktop\crop-intelligence\backend\ml\production

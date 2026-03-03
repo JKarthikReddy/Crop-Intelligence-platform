@@ -2,25 +2,25 @@
 
        apple       1.00      1.00      1.00        40
       banana       1.00      1.00      1.00        40
-   blackgram       0.98      1.00      0.99        40
+   blackgram       1.00      1.00      1.00        40
     chickpea       1.00      1.00      1.00        40
      coconut       1.00      1.00      1.00        40
       coffee       1.00      1.00      1.00        40
       cotton       1.00      1.00      1.00        40
       grapes       1.00      1.00      1.00        40
-        jute       0.88      0.95      0.92        40
+        jute       0.93      0.93      0.93        40
  kidneybeans       0.98      1.00      0.99        40
       lentil       1.00      1.00      1.00        40
        maize       1.00      1.00      1.00        40
        mango       1.00      1.00      1.00        40
-   mothbeans       1.00      0.97      0.99        40
+   mothbeans       1.00      1.00      1.00        40
     mungbean       1.00      1.00      1.00        40
    muskmelon       1.00      1.00      1.00        40
       orange       1.00      1.00      1.00        40
       papaya       1.00      1.00      1.00        40
   pigeonpeas       1.00      0.97      0.99        40
  pomegranate       1.00      1.00      1.00        40
-        rice       0.95      0.88      0.91        40
+        rice       0.93      0.93      0.93        40
   watermelon       1.00      1.00      1.00        40
 
     accuracy                           0.99       880
