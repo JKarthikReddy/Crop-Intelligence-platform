@@ -1,0 +1,27 @@
+services:
+  - type: web
+    name: crop-intelligence-platform
+    env: python
+    region: oregon
+    plan: free
+    rootDir: backend
+    buildCommand: pip install -r requirements.txt
+    startCommand: uvicorn app.main:app --host 0.0.0.0 --port $PORT
+    autoDeploy: true
+    envVars:
+      - key: DATABASE_URL
+        value: sqlite+aiosqlite:///./crop_intel.db
+      - key: REDIS_URL
+        value: redis://localhost:6379/0
+      - key: JWT_SECRET_KEY
+        generateValue: true
+      - key: JWT_ALGORITHM
+        value: HS256
+      - key: JWT_EXPIRES_MINUTES
+        value: "1440"
+      - key: DEBUG
+        value: "false"
+      - key: ENV
+        value: production
+      - key: CORS_ORIGINS
+        value: '["*"]'
