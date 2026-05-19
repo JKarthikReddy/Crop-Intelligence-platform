@@ -9,14 +9,14 @@ registerPage("dashboard", {
       <div class="page">
         <div class="page-header">
           <h1>Crop Intelligence Dashboard</h1>
-          <p>Enterprise agricultural intelligence platform — 6 domain engines working together</p>
+          <p>Enterprise agricultural intelligence platform — 9 domain engines working together</p>
         </div>
 
         <!-- Quick Stats -->
         <div class="stats-row" id="dash-stats">
           <div class="card stat-card">
             <div class="stat-label">Engines Online</div>
-            <div class="stat-value" style="color:var(--ci-green-600)">6 / 6</div>
+            <div class="stat-value" style="color:var(--ci-green-600)">9 / 9</div>
             <div class="stat-sub">All systems operational</div>
           </div>
           <div class="card stat-card">
@@ -31,8 +31,8 @@ registerPage("dashboard", {
           </div>
           <div class="card stat-card">
             <div class="stat-label">Status</div>
-            <div class="stat-value" id="dash-health-val" style="color:var(--ci-green-600)">--</div>
-            <div class="stat-sub" id="dash-health-sub">Checking...</div>
+            <div class="stat-value" id="dash-health-val" style="color:var(--ci-green-600)">OK</div>
+            <div class="stat-sub" id="dash-health-sub">Version 0.1.0</div>
           </div>
         </div>
 
@@ -124,6 +124,48 @@ registerPage("dashboard", {
             </div>
           </div>
 
+          <!-- Farmer Profile -->
+          <div class="card card-clickable engine-card engine-farmer" data-nav="profile">
+            <div class="engine-icon">&#128100;</div>
+            <span class="engine-arrow">&#8594;</span>
+            <h3>Farmer Engine</h3>
+            <p>Farmer profile management, registration, query history tracking, and personalized recommendations.</p>
+            <div class="engine-features">
+              <span class="feature-tag">Profile CRUD</span>
+              <span class="feature-tag">Query History</span>
+              <span class="feature-tag">Personalization</span>
+              <span class="feature-tag">Phone Lookup</span>
+            </div>
+          </div>
+
+          <!-- Geo Intelligence -->
+          <div class="card card-clickable engine-card engine-geo" data-nav="geo">
+            <div class="engine-icon">&#127758;</div>
+            <span class="engine-arrow">&#8594;</span>
+            <h3>Geo Intelligence</h3>
+            <p>Satellite NDVI vegetation health, SoilGrids analysis, and climate zone classification for any location.</p>
+            <div class="engine-features">
+              <span class="feature-tag">NDVI</span>
+              <span class="feature-tag">SoilGrids</span>
+              <span class="feature-tag">Climate Zone</span>
+              <span class="feature-tag">GPS / Village</span>
+            </div>
+          </div>
+
+          <!-- Notification -->
+          <div class="card card-clickable engine-card engine-notification" data-nav="notifications">
+            <div class="engine-icon">&#128276;</div>
+            <span class="engine-arrow">&#8594;</span>
+            <h3>Notification Engine</h3>
+            <p>Proactive agricultural alerts — weather warnings, disease risks, market opportunities, and growth reminders.</p>
+            <div class="engine-features">
+              <span class="feature-tag">Weather Alerts</span>
+              <span class="feature-tag">Disease Risks</span>
+              <span class="feature-tag">Market Tips</span>
+              <span class="feature-tag">Stage Reminders</span>
+            </div>
+          </div>
+
         </div>
 
         <!-- Full Advisory Card -->
@@ -158,6 +200,9 @@ API Gateway (/api/v1)
       +--- /fertilizer/recommend  Fertilizer Engine (NPK + Products)
       +--- /disease/assess ------ Disease Engine (12 diseases x 4 crops)
       +--- /market/analyze ------ Market Engine (Price + Profitability)
+      +--- /farmer/register ------ Farmer Engine (Profile + History)
+      +--- /notifications/generate  Notification Engine (Alerts)
+      +--- /geo/intelligence ---- Geo Intelligence (NDVI + Soil + Climate)
       |
       +--- /advisory/full ------- Advisory Aggregator
             |                       (runs all 6 engines)
